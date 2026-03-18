@@ -1,0 +1,12 @@
+const express = require('express');
+const { verificarToken, checkRole } = require('../middlewares/auth');
+const router = express.Router();
+router.get('/',               verificarToken, checkRole(['admin','empresa']),               (_,res) => res.json({ message: 'Fase 2' }));
+router.get('/:id',            verificarToken, checkRole(['admin','empresa','repartidor']), (_,res) => res.json({ message: 'Fase 2' }));
+router.post('/',              verificarToken, checkRole(['admin','empresa']),               (_,res) => res.json({ message: 'Fase 2' }));
+router.post('/bulk',          verificarToken, checkRole(['admin','empresa']),               (_,res) => res.json({ message: 'Fase 2' }));
+router.put('/:id',            verificarToken, checkRole(['admin']),                         (_,res) => res.json({ message: 'Fase 2' }));
+router.patch('/:id/asignar',  verificarToken, checkRole(['admin']),                         (_,res) => res.json({ message: 'Fase 2' }));
+router.post('/:id/estados',   verificarToken, checkRole(['admin','repartidor']),            (_,res) => res.json({ message: 'Fase 3' }));
+router.get('/:id/estados',    verificarToken, checkRole(['admin','empresa','repartidor']), (_,res) => res.json({ message: 'Fase 3' }));
+module.exports = router;
