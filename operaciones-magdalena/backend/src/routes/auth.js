@@ -27,7 +27,7 @@ router.post('/login', async (req, res) => {
   // Use the main service_role client (clean context) to query profile
   const { data: usuario, error: userError } = await supabase
     .from('usuarios')
-    .select('id, nombre_completo, email, rol, empresa_id, activo')
+    .select('id, nombre_completo, email, rol, empresa_id, activo, avatar_url, es_principal, permisos')
     .eq('id', authData.user.id)
     .single();
 
@@ -50,6 +50,9 @@ router.post('/login', async (req, res) => {
       email:           usuario.email,
       rol:             usuario.rol,
       empresa_id:      usuario.empresa_id,
+      avatar_url:      usuario.avatar_url,
+      es_principal:    Boolean(usuario.es_principal),
+      permisos:        usuario.permisos || {},
     }
   });
 });

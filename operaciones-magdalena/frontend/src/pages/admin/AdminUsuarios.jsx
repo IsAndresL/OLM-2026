@@ -1,21 +1,54 @@
 import { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
 import { useAuth } from '../../context/AuthContext';
-import { usuariosService } from '../../services/api';
+import { usuariosService, authService } from '../../services/api';
+import { ShieldCheck, UserPlus, Edit2, Trash2, Camera, Check, X, ShieldAlert, User as UserIcon } from 'lucide-react';
+import useAlerta from '../../hooks/useAlerta';
+import Alerta from '../../components/Alerta';
+import {
+  ADMIN_PERMISSION_KEYS,
+  ADMIN_PERMISSION_LABELS,
+  DEFAULT_ADMIN_PERMISSIONS,
+  normalizeAdminPermissions,
+} from '../../constants/permissions';
 
 export default function AdminUsuarios() {
-  const { token } = useAuth();
+  const { token, user: activeUser, hasPermission, isPrincipalAdmin } = useAuth();
+  const { alerta, mostrarAlerta, cerrarAlerta } = useAlerta();
+  const canViewUsers = hasPermission('usuarios.view');
+  const canCreateUsers = hasPermission('usuarios.create');
+  const canEditUsers = hasPermission('usuarios.edit');
+  const canDeleteUsers = hasPermission('usuarios.delete');
+  const canManagePermissions = hasPermission('usuarios.permissions.manage');
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  
+  // Security state
+  const [isVerified, setIsVerified] = useState(false);
+  const [verifyPass, setVerifyPass] = useState('');
+  const [verifying, setVerifying] = useState(false);
+
+  // Form/Modal state
   const [showForm, setShowForm] = useState(false);
+  const [editMode, setEditMode] = useState(false); // false=crear, true=editar
+  const [selectedId, setSelectedId] = useState(null);
+  
   const [formData, setFormData] = useState({
-    nombre_completo: '', email: '', password: '', rol: 'repartidor', telefono: ''
+    nombre_completo: '',
+    email: '',
+    password: '',
+    rol: 'repartidor',
+    telefono: '',
+    identificacion: '',
+    es_principal: false,
+    permisos: normalizeAdminPermissions(DEFAULT_ADMIN_PERMISSIONS),
   });
-  const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
+
   async function cargarUsuarios() {
+    if (!canViewUsers) return;
     try {
       setLoading(true);
       const data = await usuariosService.listar(token);
@@ -27,25 +60,161 @@ export default function AdminUsuarios() {
     }
   }
 
-  useEffect(() => { cargarUsuarios(); }, []);
+  useEffect(() => { 
+    if (isVerified && canViewUsers) cargarUsuarios(); 
+  }, [isVerified, canViewUsers]);
 
-  async function handleCrear(e) {
+  async function handleVerify(e) {
     e.preventDefault();
-    setFormError('');
+    setVerifying(true);
+    try {
+      // Intentar login con el correo del admin actual + password ingresado
+      await authService.login(activeUser.email, verifyPass);
+      setIsVerified(true);
+    } catch (err) {
+      mostrarAlerta('error', 'Contraseña incorrecta');
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!editMode && !canCreateUsers) {
+      mostrarAlerta('error', 'No tienes permiso para crear usuarios');
+      return;
+    }
+    if (editMode && !canEditUsers) {
+      mostrarAlerta('error', 'No tienes permiso para editar usuarios');
+      return;
+    }
+
     setFormLoading(true);
     try {
-      await usuariosService.crear(token, formData);
+      const payload = {
+        ...formData,
+        permisos: formData.rol === 'admin'
+          ? normalizeAdminPermissions(formData.permisos, Boolean(formData.es_principal))
+          : {},
+      };
+
+      if (editMode) {
+        await usuariosService.editar(token, selectedId, payload);
+        mostrarAlerta('success', 'Usuario actualizado');
+      } else {
+        await usuariosService.crear(token, payload);
+        mostrarAlerta('success', 'Usuario creado exitosamente');
+      }
       setShowForm(false);
-      setFormData({ nombre_completo: '', email: '', password: '', rol: 'repartidor', telefono: '' });
+      resetForm();
       cargarUsuarios();
     } catch (err) {
-      setFormError(err.message);
+      mostrarAlerta('error', err.message);
     } finally {
       setFormLoading(false);
     }
   }
 
+  function resetForm() {
+    setFormData({
+      nombre_completo: '',
+      email: '',
+      password: '',
+      rol: 'repartidor',
+      telefono: '',
+      identificacion: '',
+      es_principal: false,
+      permisos: normalizeAdminPermissions(DEFAULT_ADMIN_PERMISSIONS),
+    });
+    setEditMode(false);
+    setSelectedId(null);
+  }
+
+  function openEdit(u) {
+    if (!canEditUsers) {
+      mostrarAlerta('error', 'No tienes permiso para editar usuarios');
+      return;
+    }
+
+    setFormData({
+      nombre_completo: u.nombre_completo,
+      email: u.email,
+      password: '****', // placeholder for visual
+      rol: u.rol,
+      telefono: u.telefono || '',
+      identificacion: u.identificacion || '',
+      es_principal: Boolean(u.es_principal),
+      permisos: normalizeAdminPermissions(u.permisos || DEFAULT_ADMIN_PERMISSIONS, Boolean(u.es_principal)),
+    });
+    setSelectedId(u.id);
+    setEditMode(true);
+    setShowForm(true);
+  }
+
+  async function handleEliminar(id) {
+    if (!canDeleteUsers) {
+      mostrarAlerta('error', 'No tienes permiso para eliminar usuarios');
+      return;
+    }
+
+    if (!window.confirm('¿Estás seguro de eliminar este usuario? Esta acción es irreversible.')) return;
+    try {
+      await usuariosService.eliminar(token, id);
+      mostrarAlerta('success', 'Usuario eliminado');
+      cargarUsuarios();
+    } catch (err) {
+      mostrarAlerta('error', err.message);
+    }
+  }
+
+  async function handleAvatar(id, file) {
+    if (!canEditUsers) {
+      mostrarAlerta('error', 'No tienes permiso para editar usuarios');
+      return;
+    }
+
+    try {
+      const res = await usuariosService.subirAvatar(token, id, file);
+      mostrarAlerta('success', 'Avatar actualizado');
+      cargarUsuarios();
+    } catch (err) {
+      mostrarAlerta('error', err.message);
+    }
+  }
+
+  function handleAvatarError(id) {
+    setUsuarios((prev) => prev.map((u) => (u.id === id ? { ...u, avatar_url: null } : u)));
+  }
+
+  function handleRolChange(nextRol) {
+    setFormData((prev) => ({
+      ...prev,
+      rol: nextRol,
+      es_principal: nextRol === 'admin' ? prev.es_principal : false,
+      permisos: nextRol === 'admin'
+        ? normalizeAdminPermissions(prev.permisos || DEFAULT_ADMIN_PERMISSIONS, Boolean(prev.es_principal))
+        : {},
+    }));
+  }
+
+  function togglePermiso(permiso) {
+    setFormData((prev) => ({
+      ...prev,
+      permisos: {
+        ...prev.permisos,
+        [permiso]: !prev.permisos?.[permiso],
+      },
+    }));
+  }
+
+
   async function handleToggleEstado(id, activo) {
+    if (!canEditUsers) {
+      mostrarAlerta('error', 'No tienes permiso para editar usuarios');
+      return;
+    }
+
     try {
       await usuariosService.toggleEstado(token, id, !activo);
       cargarUsuarios();
@@ -66,154 +235,337 @@ export default function AdminUsuarios() {
   return (
     <Layout>
       <div className="space-y-6">
-        {/* Header */}
+        {/* Action Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Usuarios</h1>
-            <p className="text-sm text-gray-500 mt-1">Gestiona los usuarios del sistema</p>
+            <h1 className="text-2xl font-title text-brand-dark">Gestión de Usuarios</h1>
+            <p className="text-sm text-gray-500 font-body">Administra las cuentas de acceso al sistema OLM.</p>
           </div>
           <button
-            onClick={() => setShowForm(!showForm)}
-            className="px-4 py-2.5 text-white text-sm font-medium rounded-lg transition-colors duration-150 hover:opacity-90"
-            style={{ backgroundColor: '#1D4ED8' }}
+            disabled={!canCreateUsers && !showForm}
+            onClick={() => { if(showForm) resetForm(); setShowForm(!showForm); }}
+            className={`px-4 py-2.5 text-white text-sm font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${showForm ? 'bg-gray-400' : 'bg-brand-primary hover:bg-brand-navy active:scale-95'}`}
           >
-            {showForm ? 'Cancelar' : '+ Nuevo usuario'}
+            {showForm ? <X size={18} /> : <UserPlus size={18} />}
+            {showForm ? 'Cerrar' : (canCreateUsers ? 'Nuevo Usuario' : 'Sin permiso para crear')}
           </button>
         </div>
 
-        {/* Create form */}
-        {showForm && (
-          <div className="bg-white rounded-2xl border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Crear nuevo usuario</h3>
-            {formError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{formError}</p>
-              </div>
-            )}
-            <form onSubmit={handleCrear} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre completo</label>
-                <input
-                  type="text" required
-                  value={formData.nombre_completo}
-                  onChange={(e) => setFormData({ ...formData, nombre_completo: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="Juan Pérez"
+        {/* Security Screen */}
+        {!isVerified && (
+          <div className="bg-white rounded-3xl border border-gray-100 shadow-xl p-10 max-w-sm mx-auto text-center mt-12 animate-fade-in">
+             <div className="w-16 h-16 bg-brand-light/10 text-brand-primary rounded-2xl flex items-center justify-center mx-auto mb-6">
+                <ShieldCheck size={32} />
+             </div>
+             <h2 className="text-xl font-title text-gray-800 mb-2">Panel Protegido</h2>
+             <p className="text-sm text-gray-500 mb-8 font-body">Por tu seguridad, introduce tu contraseña de administrador para continuar.</p>
+             <form onSubmit={handleVerify} className="space-y-4">
+                <input 
+                  type="password" 
+                  autoFocus
+                  placeholder="Contraseña de admin" 
+                  autoComplete="current-password"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-brand-primary outline-none text-center"
+                  value={verifyPass}
+                  onChange={e => setVerifyPass(e.target.value)}
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <input
-                  type="email" required
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="correo@ejemplo.com"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
-                <input
-                  type="password" required
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="••••••••"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Rol</label>
-                <select
-                  value={formData.rol}
-                  onChange={(e) => setFormData({ ...formData, rol: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                <button 
+                  disabled={verifying || !verifyPass}
+                  className="w-full py-3 bg-brand-navy text-white rounded-xl font-bold shadow-lg shadow-brand-navy/20 active:scale-95 transition-all disabled:opacity-50"
                 >
-                  <option value="repartidor">Repartidor</option>
-                  <option value="empresa">Empresa</option>
-                  <option value="admin">Administrador</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
-                <input
-                  type="text"
-                  value={formData.telefono}
-                  onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="3001234567"
-                />
-              </div>
-              <div className="flex items-end">
-                <button
-                  type="submit" disabled={formLoading}
-                  className="px-6 py-2 text-white text-sm font-medium rounded-lg transition-colors duration-150 hover:opacity-90 disabled:opacity-50"
-                  style={{ backgroundColor: '#1D4ED8' }}
-                >
-                  {formLoading ? 'Creando...' : 'Crear usuario'}
+                  {verifying ? 'Verificando...' : 'Desbloquear Panel'}
                 </button>
-              </div>
-            </form>
+             </form>
           </div>
         )}
 
-        {/* Users table */}
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          {loading ? (
-            <div className="p-8 text-center text-sm text-gray-400">Cargando usuarios...</div>
-          ) : error ? (
-            <div className="p-8 text-center text-sm text-red-500">{error}</div>
-          ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Nombre</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Rol</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Estado</th>
-                  <th className="text-right px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {usuarios.map((u) => (
-                  <tr key={u.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="text-sm font-medium text-gray-900">{u.nombre_completo}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm text-gray-600">{u.email}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex px-2.5 py-0.5 text-xs font-medium rounded-full capitalize ${rolBadge(u.rol)}`}>
-                        {u.rol}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex px-2.5 py-0.5 text-xs font-medium rounded-full ${u.activo ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {u.activo ? 'Activo' : 'Inactivo'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => handleToggleEstado(u.id, u.activo)}
-                        className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${u.activo ? 'text-red-600 hover:bg-red-50' : 'text-green-600 hover:bg-green-50'}`}
-                      >
-                        {u.activo ? 'Desactivar' : 'Activar'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {usuarios.length === 0 && (
-                  <tr>
-                    <td colSpan="5" className="px-6 py-8 text-center text-sm text-gray-400">
-                      No hay usuarios registrados
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
+        {isVerified && (
+          <>
+            {!canViewUsers && (
+              <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl p-4 text-sm font-semibold">
+                Tu usuario administrador no tiene habilitado el permiso para ver este modulo.
+              </div>
+            )}
+
+            {/* Create/Edit form */}
+            {showForm && canViewUsers && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-lg p-8 animate-fade-in-down">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-title text-gray-900">{editMode ? 'Editar Usuario' : 'Crear Nuevo Usuario'}</h3>
+                  <button onClick={() => { setShowForm(false); resetForm(); }} className="text-gray-400 hover:text-gray-600"><X /></button>
+                </div>
+                
+                <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6 font-body">
+                  <div className="md:col-span-2 bg-gray-50 p-4 rounded-xl flex items-center gap-4 border border-gray-100 mb-2">
+                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-inner border border-gray-200 text-gray-300 relative overflow-hidden group">
+                      <UserIcon size={24} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Identidad Visual</p>
+                      <p className="text-sm text-gray-600">El avatar se sube después de crear el perfil.</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Rol del Usuario</label>
+                    <select
+                      value={formData.rol}
+                      disabled={editMode}
+                      onChange={(e) => handleRolChange(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none font-semibold disabled:bg-gray-50"
+                    >
+                      <option value="repartidor">Repartidor (Conductor)</option>
+                      <option value="empresa">Empresa Aliada</option>
+                      <option value="admin">Administrador Corporativo</option>
+                    </select>
+                  </div>
+
+                  {formData.rol === 'empresa' && !editMode && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Nombre de Empresa</label>
+                        <input
+                          type="text" required
+                          value={formData.nombre_empresa || ''}
+                          onChange={(e) => setFormData({ ...formData, nombre_empresa: e.target.value })}
+                          className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none"
+                          placeholder="Ej: Transportes OLM"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">NIT</label>
+                        <input
+                          type="text" required
+                          value={formData.nit_empresa || ''}
+                          onChange={(e) => setFormData({ ...formData, nit_empresa: e.target.value })}
+                          className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none"
+                          placeholder="900.123.456-1"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {formData.rol === 'repartidor' && (
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Cédula / Identificación</label>
+                      <input
+                        type="text" required
+                        value={formData.identificacion || ''}
+                        onChange={(e) => setFormData({ ...formData, identificacion: e.target.value })}
+                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none"
+                        placeholder="1.082.000.000"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Nombre Completo</label>
+                    <input
+                      type="text" required
+                      value={formData.nombre_completo}
+                      onChange={(e) => setFormData({ ...formData, nombre_completo: e.target.value })}
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none"
+                      placeholder="Nombre y Apellido"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Correo Electrónico</label>
+                    <input
+                      type="email" required
+                      disabled={editMode}
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none disabled:text-gray-400"
+                      placeholder="usuario@peticion.com"
+                    />
+                  </div>
+
+                  {!editMode && (
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Contraseña Inicial</label>
+                      <input
+                        type="password" required
+                        value={formData.password}
+                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none"
+                        placeholder="Asignar clave"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Teléfono Movil</label>
+                    <input
+                      type="text"
+                      value={formData.telefono}
+                      onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none"
+                      placeholder="300 000 0000"
+                    />
+                  </div>
+
+                  {formData.rol === 'admin' && canManagePermissions && (
+                    <div className="md:col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-600 mb-3">Funciones desbloqueadas</h4>
+
+                      {isPrincipalAdmin && (
+                        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-4">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(formData.es_principal)}
+                            onChange={(e) => setFormData({ ...formData, es_principal: e.target.checked })}
+                            className="rounded border-gray-300 text-brand-primary focus:ring-brand-light"
+                          />
+                          Marcar como administrador principal
+                        </label>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {ADMIN_PERMISSION_KEYS.map((key) => (
+                          <label key={key} className="flex items-center gap-2 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(formData.permisos?.[key])}
+                              onChange={() => togglePermiso(key)}
+                              disabled={Boolean(formData.es_principal)}
+                              className="rounded border-gray-300 text-brand-primary focus:ring-brand-light"
+                            />
+                            {ADMIN_PERMISSION_LABELS[key]}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="md:col-span-2 pt-6 flex justify-end gap-3">
+                    <button
+                      type="button" onClick={() => { setShowForm(false); resetForm(); }}
+                      className="px-6 py-3 text-gray-500 font-bold hover:text-gray-700 transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit" disabled={formLoading || (!editMode && !canCreateUsers) || (editMode && !canEditUsers)}
+                      className="px-8 py-3 bg-brand-navy text-white font-bold rounded-xl shadow-lg shadow-brand-navy/20 active:scale-[0.98] transition-all disabled:opacity-50"
+                    >
+                      {formLoading ? 'Procesando...' : (editMode ? 'Guardar Cambios' : 'Crear Usuario')}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Users list View */}
+            {canViewUsers && (
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden min-h-[400px]">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left font-body">
+                  <thead>
+                    <tr className="bg-gray-50/50 border-b border-gray-100">
+                      <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Identidad</th>
+                      <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Contacto</th>
+                      <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Rol</th>
+                      <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Estado</th>
+                      <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {usuarios.map((u) => (
+                      <tr key={u.id} className="group hover:bg-gray-50/40 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                             <div className="relative">
+                               <div className="w-12 h-12 rounded-2xl bg-gray-100 overflow-hidden shadow-inner border border-gray-100 transition-transform group-hover:scale-105">
+                                  {u.avatar_url ? (
+                                    <img src={u.avatar_url} alt={u.nombre_completo} className="w-full h-full object-cover" onError={() => handleAvatarError(u.id)} />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
+                                       <UserIcon size={20} />
+                                    </div>
+                                  )}
+                               </div>
+                               {canEditUsers && (
+                                 <label className="absolute -bottom-1 -right-1 w-6 h-6 bg-brand-primary text-white rounded-lg flex items-center justify-center cursor-pointer hover:bg-brand-navy shadow-md transition-all scale-0 group-hover:scale-100">
+                                    <Camera size={12} />
+                                    <input type="file" className="hidden" accept="image/*" onChange={(e) => handleAvatar(u.id, e.target.files[0])} />
+                                 </label>
+                               )}
+                             </div>
+                             <div>
+                               <p className="text-sm font-bold text-gray-900 leading-snug">{u.nombre_completo}</p>
+                               <p className="text-[10px] text-gray-400 font-mono">{u.identificacion || 'S/I'}</p>
+                             </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className="text-sm text-gray-600 font-medium">{u.email}</p>
+                          <p className="text-[11px] text-brand-primary font-bold">{u.telefono || 'Sin tel.'}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex px-2.5 py-1 text-[10px] font-black rounded-full uppercase tracking-tighter shadow-sm border ${rolBadge(u.rol)}`}>
+                              {u.rol}
+                            </span>
+                            {u.rol === 'admin' && u.es_principal && (
+                              <span className="inline-flex px-2.5 py-1 text-[10px] font-black rounded-full uppercase tracking-tighter shadow-sm border bg-slate-100 text-slate-700 border-slate-200">
+                                principal
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <button 
+                            onClick={() => handleToggleEstado(u.id, u.activo)}
+                            disabled={u.email === 'admin@magdalenalogistica.com' || !canEditUsers}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all border shadow-sm ${u.activo ? 'bg-green-50 text-green-700 border-green-100' : 'bg-red-50 text-red-600 border-red-100 opacity-60'}`}
+                          >
+                            {u.activo ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
+                            {u.activo ? 'ACTIVO' : 'INACTIVO'}
+                          </button>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {canEditUsers && (
+                              <button 
+                                onClick={() => openEdit(u)}
+                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
+                                title="Editar datos"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                            )}
+                            {canDeleteUsers && (
+                              <button 
+                                onClick={() => handleEliminar(u.id)}
+                                disabled={u.email === 'admin@magdalenalogistica.com'}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition-colors disabled:opacity-0"
+                                title="Eliminar usuario"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {usuarios.length === 0 && (
+                      <tr>
+                        <td colSpan="5" className="px-6 py-12 text-center">
+                          <p className="text-gray-400 text-sm font-medium">No se encontraron usuarios registrados.</p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            )}
+          </>
+        )}
       </div>
+
+      <Alerta {...alerta} onClose={cerrarAlerta} />
     </Layout>
   );
 }

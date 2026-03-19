@@ -1,11 +1,35 @@
 import { NavLink, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import logoOlm from '../image/logo-olm.png';
+import { 
+  LayoutDashboard, 
+  FileText, 
+  Users, 
+  Truck, 
+  Map,
+  Route,
+  MapPinned,
+  Undo2,
+  HandCoins,
+  Wallet,
+  Settings,
+  LogOut, 
+  ChevronRight,
+} from 'lucide-react';
 
 const navItems = {
   admin: [
     { to: '/admin/dashboard', label: 'Dashboard',  icon: 'chart' },
     { to: '/admin/guias',     label: 'Guías',      icon: 'doc' },
+    { to: '/admin/mapa',      label: 'Mapa en vivo', icon: 'map' },
+    { to: '/admin/rutas',     label: 'Rutas', icon: 'route' },
+    { to: '/admin/zonas',     label: 'Zonas', icon: 'zone' },
+    { to: '/admin/devoluciones', label: 'Devoluciones', icon: 'return' },
     { to: '/admin/usuarios',  label: 'Usuarios',   icon: 'users' },
+    { to: '/admin/liquidaciones', label: 'Liquidaciones', icon: 'money' },
+    { to: '/admin/caja', label: 'Caja contraentrega', icon: 'cash' },
+    { to: '/admin/tarifas', label: 'Tarifas', icon: 'settings' },
   ],
   empresa: [
     { to: '/empresa/dashboard', label: 'Dashboard', icon: 'chart' },
@@ -17,40 +41,46 @@ const navItems = {
 };
 
 function Icon({ name, className }) {
+  const props = { className, size: 20, strokeWidth: 2 };
   switch (name) {
-    case 'chart':
-      return (
-        <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
-        </svg>
-      );
-    case 'doc':
-      return (
-        <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-        </svg>
-      );
-    case 'users':
-      return (
-        <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
-        </svg>
-      );
-    case 'truck':
-      return (
-        <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.588-.75H14.25M3.75 15.75V4.875c0-.621.504-1.125 1.125-1.125h11.25c.621 0 1.125.504 1.125 1.125v11.25M3.75 15.75h10.5" />
-        </svg>
-      );
-    default:
-      return null;
+    case 'chart': return <LayoutDashboard {...props} />;
+    case 'doc':   return <FileText {...props} />;
+    case 'users': return <Users {...props} />;
+    case 'truck': return <Truck {...props} />;
+    case 'map': return <Map {...props} />;
+    case 'route': return <Route {...props} />;
+    case 'zone': return <MapPinned {...props} />;
+    case 'return': return <Undo2 {...props} />;
+    case 'money': return <HandCoins {...props} />;
+    case 'cash': return <Wallet {...props} />;
+    case 'settings': return <Settings {...props} />;
+    default:      return null;
   }
 }
 
+
 export default function Layout({ children }) {
-  const { user, logout } = useAuth();
+  const { user, logout, hasPermission } = useAuth();
   const navigate = useNavigate();
-  const items = navItems[user?.rol] || [];
+  const items = (navItems[user?.rol] || []).filter((item) => {
+    if (user?.rol !== 'admin') return true;
+    if (item.to === '/admin/dashboard') return hasPermission('dashboard.view');
+    if (item.to === '/admin/guias') return hasPermission('guias.view');
+    if (item.to === '/admin/mapa') return hasPermission('mapa.view');
+    if (item.to === '/admin/rutas') return hasPermission('rutas.manage');
+    if (item.to === '/admin/zonas') return hasPermission('zonas.manage');
+    if (item.to === '/admin/devoluciones') return hasPermission('devoluciones.view');
+    if (item.to === '/admin/usuarios') return hasPermission('usuarios.view');
+    if (item.to === '/admin/liquidaciones') return hasPermission('liquidaciones.view');
+    if (item.to === '/admin/caja') return hasPermission('caja_cod.view');
+    if (item.to === '/admin/tarifas') return hasPermission('tarifas.manage');
+    return true;
+  });
+  const [avatarError, setAvatarError] = useState(false);
+
+  useEffect(() => {
+    setAvatarError(false);
+  }, [user?.avatar_url]);
 
   function handleLogout() {
     logout();
@@ -64,11 +94,7 @@ export default function Layout({ children }) {
         {/* Brand */}
         <div className="px-6 py-5 border-b border-gray-100">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm" style={{ backgroundColor: '#1D4ED8' }}>
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.588-.75H14.25M3.75 15.75V4.875c0-.621.504-1.125 1.125-1.125h11.25c.621 0 1.125.504 1.125 1.125v11.25M3.75 15.75h10.5" />
-              </svg>
-            </div>
+            <img src={logoOlm} alt="OLM Logo" className="h-10 object-contain drop-shadow" />
             <div>
               <p className="text-sm font-semibold text-gray-900 leading-tight">OLM</p>
               <p className="text-[10px] text-gray-400 leading-tight">Operaciones Logísticas</p>
@@ -83,18 +109,22 @@ export default function Layout({ children }) {
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150 ${
+                `flex items-center justify-between px-3 py-3 rounded-xl text-sm font-bold transition-all duration-200 group ${
                   isActive
-                    ? 'text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/25'
+                    : 'text-gray-500 hover:bg-gray-100 hover:text-brand-primary'
                 }`
               }
-              style={({ isActive }) =>
-                isActive ? { backgroundColor: '#1D4ED8' } : {}
-              }
             >
-              <Icon name={item.icon} className="w-5 h-5" />
-              {item.label}
+              {({ isActive }) => (
+                <>
+                  <div className="flex items-center gap-3">
+                    <Icon name={item.icon} className="transition-transform group-hover:scale-110" />
+                    {item.label}
+                  </div>
+                  {!isActive && <ChevronRight size={14} className="opacity-0 group-hover:opacity-50 transition-all" />}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -102,10 +132,14 @@ export default function Layout({ children }) {
         {/* User info */}
         <div className="px-4 py-4 border-t border-gray-100">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
-              <span className="text-xs font-semibold text-gray-600">
-                {user?.nombre_completo?.charAt(0)?.toUpperCase() || 'U'}
-              </span>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center overflow-hidden border border-gray-100 bg-gray-200">
+              {user?.avatar_url && !avatarError ? (
+                <img src={user.avatar_url} alt="Profile" className="w-full h-full object-cover" onError={() => setAvatarError(true)} />
+              ) : (
+                <span className="text-xs font-semibold text-gray-600">
+                  {user?.nombre_completo?.charAt(0)?.toUpperCase() || 'U'}
+                </span>
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-900 truncate">{user?.nombre_completo}</p>
@@ -125,13 +159,12 @@ export default function Layout({ children }) {
           </div>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-150"
+            className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all active:scale-95 group"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
-            </svg>
-            Cerrar sesión
+            <LogOut size={16} className="transition-transform group-hover:-translate-x-1" />
+            CERRAR SESIÓN
           </button>
+
         </header>
 
         {/* Page content */}

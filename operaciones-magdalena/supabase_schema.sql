@@ -32,6 +32,8 @@ CREATE TABLE usuarios (
   rol              VARCHAR(20) NOT NULL CHECK (rol IN ('admin','empresa','repartidor')),
   empresa_id       UUID REFERENCES empresas(id) ON DELETE SET NULL,
   activo           BOOLEAN NOT NULL DEFAULT TRUE,
+  es_principal     BOOLEAN NOT NULL DEFAULT FALSE,
+  permisos         JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_usuarios_rol        ON usuarios(rol);
