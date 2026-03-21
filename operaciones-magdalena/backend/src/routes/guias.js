@@ -5,7 +5,128 @@ const supabase = require('../config/supabase');
 const { verificarToken, checkRole, checkAdminPermission } = require('../middlewares/auth');
 
 const router = express.Router();
-const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
+const upload = multer({
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/csv',
+      'application/csv',
+      'application/vnd.ms-excel',
+    ];
+    const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+    const allowedExt = ['xlsx', 'csv'];
+    if (allowedMimes.includes(file.mimetype) && allowedExt.includes(ext)) return cb(null, true);
+    return cb(new Error('Tipo de archivo no permitido. Usa .xlsx o .csv'));
+  },
+}); // 5MB
+
+function sanitizeSearchTerm(value = '') {
+  const cleaned = String(value)
+    .replace(/[%*(),]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  return cleaned;
+}
+
+function normalizeHeaderKey(value = '') {
+  return String(value)
+    .replace(/^\uFEFF/, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+const BULK_KEY_ALIASES = {
+  // Required fields
+  nombre_remitente: 'nombre_remitente',
+  remitente: 'nombre_remitente',
+  nombre_destinatario: 'nombre_destinatario',
+  destinatario: 'nombre_destinatario',
+  telefono_destinatario: 'telefono_destinatario',
+  telefono: 'telefono_destinatario',
+  celular: 'telefono_destinatario',
+  direccion_destinatario: 'direccion_destinatario',
+  direccion: 'direccion_destinatario',
+  ciudad_destino: 'ciudad_destino',
+  ciudad: 'ciudad_destino',
+  // Optional
+  empresa_id: 'empresa_id',
+  barrio: 'barrio',
+  descripcion_paquete: 'descripcion_paquete',
+  descripcion: 'descripcion_paquete',
+  peso_kg: 'peso_kg',
+  peso: 'peso_kg',
+  valor_declarado: 'valor_declarado',
+  valor: 'valor_declarado',
+  zona_id: 'zona_id',
+  lat: 'lat',
+  lng: 'lng',
+  ing: 'lng',
+  long: 'lng',
+  longitud: 'lng',
+};
+
+function toBulkCanonicalKey(value = '') {
+  const normalized = normalizeHeaderKey(value);
+  return BULK_KEY_ALIASES[normalized] || normalized;
+}
+
+function detectDelimiter(line = '') {
+  if (line.includes(';')) return ';';
+  if (line.includes('\t')) return '\t';
+  if (line.includes(',')) return ',';
+  return null;
+}
+
+function splitByDelimiter(line = '', delimiter = ',') {
+  // Parser simple suficiente para archivos de plantilla sin comillas complejas
+  return String(line).split(delimiter).map((part) => part.trim());
+}
+
+function normalizeRowForBulk(row) {
+  const normalized = {};
+  const rawKeys = Object.keys(row || {});
+
+  if (rawKeys.length === 1) {
+    const singleKey = rawKeys[0];
+    const delimiter = detectDelimiter(singleKey);
+    if (delimiter) {
+      const headerParts = splitByDelimiter(singleKey, delimiter);
+      const valueParts = splitByDelimiter(row[singleKey], delimiter);
+      headerParts.forEach((header, idx) => {
+        const key = toBulkCanonicalKey(header);
+        normalized[key] = valueParts[idx] !== undefined ? valueParts[idx] : '';
+      });
+      return normalized;
+    }
+  }
+
+  rawKeys.forEach((key) => {
+    const canonical = toBulkCanonicalKey(key);
+    normalized[canonical] = row[key];
+  });
+
+  return normalized;
+}
+
+function parseNullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim().replace(',', '.');
+  const parsed = Number(text);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+async function signStoragePath(bucket, path, expiresIn = 3600) {
+  if (!path) return null;
+  if (String(path).startsWith('http')) return path;
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, expiresIn);
+  if (error || !data?.signedUrl) return path;
+  return data.signedUrl;
+}
 
 // ── Helper: filtrar por empresa según rol ──
 function filtrarPorEmpresa(req, query) {
@@ -42,7 +163,10 @@ router.get('/', verificarToken, checkRole(['admin', 'empresa']), checkAdminPermi
     if (fecha_desde)   query = query.gte('created_at', fecha_desde);
     if (fecha_hasta)   query = query.lte('created_at', fecha_hasta + 'T23:59:59');
     if (q) {
-      query = query.or(`numero_guia.ilike.%${q}%,nombre_destinatario.ilike.%${q}%,telefono_destinatario.ilike.%${q}%`);
+      const safeQ = sanitizeSearchTerm(q);
+      if (safeQ) {
+        query = query.or(`numero_guia.ilike.%${safeQ}%,nombre_destinatario.ilike.%${safeQ}%,telefono_destinatario.ilike.%${safeQ}%`);
+      }
     }
 
     const { data: guias, error, count } = await query;
@@ -109,16 +233,15 @@ router.get('/:id', verificarToken, checkRole(['admin', 'empresa', 'repartidor'])
       .eq('guia_id', guia.id)
       .order('created_at', { ascending: false });
 
-    // Construir URLs firmadas para las fotos del historial almacenadas como rutas relativas
+    // Construir URLs firmadas para foto y firma del historial almacenadas como rutas relativas
     const historialSigned = await Promise.all((historial || []).map(async (h) => {
-      let signedUrl = h.foto_evidencia_url;
-      if (signedUrl && !signedUrl.startsWith('http')) {
-        const { data, error: signError } = await supabase.storage.from('evidencias').createSignedUrl(signedUrl, 3600); // Expira en 1 hora
-        if (data && !signError) {
-          signedUrl = data.signedUrl;
-        }
-      }
-      return { ...h, foto_evidencia_url: signedUrl };
+      const fotoFirmada = await signStoragePath('evidencias', h.foto_evidencia_url);
+      const firmaFirmada = await signStoragePath('firmas', h.firma_url);
+      return {
+        ...h,
+        foto_evidencia_url: fotoFirmada,
+        firma_url: firmaFirmada,
+      };
     }));
 
     return res.json({ ...guia, empresa, repartidor, historial: historialSigned });
@@ -195,12 +318,8 @@ router.post('/bulk', verificarToken, checkRole(['admin', 'empresa']), checkAdmin
 
     if (rows.length === 0) return res.status(400).json({ error: 'El archivo está vacío' });
 
-    // Normalize column headers (case-insensitive)
-    const normalizedRows = rows.map(row => {
-      const normalized = {};
-      Object.keys(row).forEach(key => { normalized[key.toLowerCase().trim()] = row[key]; });
-      return normalized;
-    });
+    // Normalize headers with aliases and flexible separators
+    const normalizedRows = rows.map((row) => normalizeRowForBulk(row));
 
     const requiredFields = ['nombre_remitente', 'nombre_destinatario', 'telefono_destinatario', 'direccion_destinatario', 'ciudad_destino'];
     let creadas = 0;
@@ -211,9 +330,9 @@ router.post('/bulk', verificarToken, checkRole(['admin', 'empresa']), checkAdmin
       const fila = i + 2; // Excel row (header = 1)
 
       // Validate required fields
-      const missing = requiredFields.filter(f => !row[f] || String(row[f]).trim() === '');
+      const missing = requiredFields.filter((f) => !row[f] || String(row[f]).trim() === '');
       if (missing.length > 0) {
-        errores.push({ fila, motivo: `Campos vacíos: ${missing.join(', ')}` });
+        errores.push({ fila, motivo: `Campos vacios o no detectados: ${missing.join(', ')}` });
         continue;
       }
 
@@ -226,7 +345,7 @@ router.post('/bulk', verificarToken, checkRole(['admin', 'empresa']), checkAdmin
 
       let finalEmpresaId = req.user.rol === 'empresa' ? req.user.empresa_id : (row.empresa_id || req.body.empresa_id);
       if (!finalEmpresaId) {
-        errores.push({ fila, motivo: 'empresa_id no proporcionado' });
+        errores.push({ fila, motivo: 'empresa_id no proporcionado (selecciona empresa en modal o agrega empresa_id por fila)' });
         continue;
       }
 
@@ -241,11 +360,11 @@ router.post('/bulk', verificarToken, checkRole(['admin', 'empresa']), checkAdmin
         ciudad_destino: String(row.ciudad_destino).trim(),
         barrio: row.barrio ? String(row.barrio).trim() : null,
         descripcion_paquete: row.descripcion_paquete ? String(row.descripcion_paquete).trim() : null,
-        peso_kg: row.peso_kg ? parseFloat(row.peso_kg) : null,
-        valor_declarado: row.valor_declarado ? parseFloat(row.valor_declarado) : null,
+        peso_kg: parseNullableNumber(row.peso_kg),
+        valor_declarado: parseNullableNumber(row.valor_declarado),
         zona_id: row.zona_id ? String(row.zona_id).trim() : null,
-        lat: row.lat ? Number(row.lat) : null,
-        lng: row.lng ? Number(row.lng) : null,
+        lat: parseNullableNumber(row.lat),
+        lng: parseNullableNumber(row.lng),
       };
 
       const { data: guia, error: insertError } = await supabase
@@ -262,7 +381,167 @@ router.post('/bulk', verificarToken, checkRole(['admin', 'empresa']), checkAdmin
       creadas++;
     }
 
-    return res.json({ creadas, errores: errores.length, detalle_errores: errores });
+    const columnasDetectadas = normalizedRows[0] ? Object.keys(normalizedRows[0]) : [];
+    return res.json({ creadas, errores: errores.length, detalle_errores: errores, columnas_detectadas: columnasDetectadas });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/v1/guias/bulk-delete — eliminacion masiva ──
+router.post('/bulk-delete', verificarToken, checkRole(['admin']), checkAdminPermission('guias.delete'), async (req, res) => {
+  try {
+    const guiaIds = Array.isArray(req.body?.guia_ids) ? req.body.guia_ids : [];
+    if (guiaIds.length === 0) {
+      return res.status(400).json({ error: 'Debes enviar al menos una guia para eliminar' });
+    }
+
+    const idsLimpios = [...new Set(guiaIds.map((id) => String(id).trim()).filter(Boolean))];
+    if (idsLimpios.length === 0) {
+      return res.status(400).json({ error: 'Lista de guias invalida' });
+    }
+
+    const { data: existentes, error: findError } = await supabase
+      .from('guias')
+      .select('id')
+      .in('id', idsLimpios);
+
+    if (findError) return res.status(500).json({ error: findError.message });
+
+    const idsExistentes = (existentes || []).map((g) => g.id);
+    if (idsExistentes.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron guias para eliminar' });
+    }
+
+    const { error: histError } = await supabase
+      .from('historial_estados')
+      .delete()
+      .in('guia_id', idsExistentes);
+    if (histError) return res.status(500).json({ error: histError.message });
+
+    const { error: deleteError } = await supabase
+      .from('guias')
+      .delete()
+      .in('id', idsExistentes);
+    if (deleteError) return res.status(500).json({ error: deleteError.message });
+
+    return res.json({
+      eliminadas: idsExistentes.length,
+      no_encontradas: idsLimpios.length - idsExistentes.length,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/v1/guias/bulk-assign — asignacion masiva ──
+router.post('/bulk-assign', verificarToken, checkRole(['admin']), checkAdminPermission('guias.assign'), async (req, res) => {
+  try {
+    const guiaIds = Array.isArray(req.body?.guia_ids) ? req.body.guia_ids : [];
+    const repartidorId = req.body?.repartidor_id;
+
+    if (!repartidorId) return res.status(400).json({ error: 'repartidor_id requerido' });
+    if (guiaIds.length === 0) return res.status(400).json({ error: 'Debes seleccionar al menos una guia' });
+
+    const idsLimpios = [...new Set(guiaIds.map((id) => String(id).trim()).filter(Boolean))];
+    if (idsLimpios.length === 0) return res.status(400).json({ error: 'Lista de guias invalida' });
+
+    const { data: repartidor, error: repError } = await supabase
+      .from('usuarios')
+      .select('id, nombre_completo, rol')
+      .eq('id', repartidorId)
+      .single();
+    if (repError || !repartidor) return res.status(404).json({ error: 'Repartidor no encontrado' });
+    if (repartidor.rol !== 'repartidor') return res.status(400).json({ error: 'El usuario seleccionado no es repartidor' });
+
+    const { data: guias, error: guiasError } = await supabase
+      .from('guias')
+      .select('id, estado_actual')
+      .in('id', idsLimpios);
+    if (guiasError) return res.status(500).json({ error: guiasError.message });
+
+    const idsExistentes = (guias || []).map((g) => g.id);
+    const idsAsignables = (guias || [])
+      .filter((g) => g.estado_actual === 'registrado')
+      .map((g) => g.id);
+
+    if (idsAsignables.length === 0) {
+      return res.status(409).json({ error: 'Ninguna guia seleccionada esta en estado registrado' });
+    }
+
+    const { error: updateError } = await supabase
+      .from('guias')
+      .update({ repartidor_id: repartidorId, estado_actual: 'asignado' })
+      .in('id', idsAsignables);
+    if (updateError) return res.status(500).json({ error: updateError.message });
+
+    const historialRows = idsAsignables.map((id) => ({
+      guia_id: id,
+      estado: 'asignado',
+      usuario_id: req.user.id,
+      nota: `Asignado masivamente a: ${repartidor.nombre_completo}`,
+    }));
+    const { error: histError } = await supabase.from('historial_estados').insert(historialRows);
+    if (histError) return res.status(500).json({ error: histError.message });
+
+    return res.json({
+      asignadas: idsAsignables.length,
+      ids_asignadas: idsAsignables,
+      omitidas_por_estado: idsExistentes.length - idsAsignables.length,
+      no_encontradas: idsLimpios.length - idsExistentes.length,
+      repartidor: { id: repartidor.id, nombre_completo: repartidor.nombre_completo },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/v1/guias/bulk-assign/undo — deshacer asignacion ──
+router.post('/bulk-assign/undo', verificarToken, checkRole(['admin']), checkAdminPermission('guias.assign'), async (req, res) => {
+  try {
+    const cambios = Array.isArray(req.body?.cambios) ? req.body.cambios : [];
+    if (cambios.length === 0) return res.status(400).json({ error: 'No hay cambios para deshacer' });
+
+    const normalizados = cambios
+      .map((c) => ({
+        id: c?.id ? String(c.id).trim() : '',
+        estado_actual: c?.estado_actual ? String(c.estado_actual).trim() : '',
+        repartidor_id: c?.repartidor_id ? String(c.repartidor_id).trim() : null,
+      }))
+      .filter((c) => c.id && c.estado_actual);
+
+    if (normalizados.length === 0) {
+      return res.status(400).json({ error: 'Formato de cambios invalido' });
+    }
+
+    const historialRows = [];
+    for (const cambio of normalizados) {
+      const { error: updateError } = await supabase
+        .from('guias')
+        .update({
+          estado_actual: cambio.estado_actual,
+          repartidor_id: cambio.repartidor_id || null,
+        })
+        .eq('id', cambio.id);
+
+      if (updateError) {
+        return res.status(500).json({ error: `No se pudo deshacer guia ${cambio.id}: ${updateError.message}` });
+      }
+
+      historialRows.push({
+        guia_id: cambio.id,
+        estado: cambio.estado_actual,
+        usuario_id: req.user.id,
+        nota: 'Asignacion deshecha por administrador',
+      });
+    }
+
+    if (historialRows.length > 0) {
+      const { error: histError } = await supabase.from('historial_estados').insert(historialRows);
+      if (histError) return res.status(500).json({ error: histError.message });
+    }
+
+    return res.json({ restauradas: normalizados.length });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -329,6 +608,38 @@ router.put('/:id', verificarToken, checkRole(['admin', 'empresa']), checkAdminPe
       });
     }
 
+    // Si una guía pasa a devuelto, crear el registro de devolución automáticamente si no existe.
+    if (req.user.rol === 'admin' && estado_actual === 'devuelto') {
+      const { data: existente, error: devFindError } = await supabase
+        .from('devoluciones')
+        .select('id')
+        .eq('guia_id', updated.id)
+        .maybeSingle();
+
+      if (devFindError) return res.status(500).json({ error: devFindError.message });
+
+      if (!existente) {
+        const motivoAuto = ['no_contesto', 'direccion_incorrecta'].includes(guia.estado_actual)
+          ? guia.estado_actual
+          : 'otro';
+
+        const { error: devCreateError } = await supabase
+          .from('devoluciones')
+          .insert({
+            guia_id: updated.id,
+            guia_retorno_id: null,
+            motivo: motivoAuto,
+            descripcion: nota_admin || `Creado automaticamente al marcar la guia ${updated.numero_guia || updated.id} como devuelta`,
+            estado: 'en_bodega',
+            repartidor_id: updated.repartidor_id || null,
+            admin_id: req.user.id,
+            foto_paquete_url: null,
+          });
+
+        if (devCreateError) return res.status(500).json({ error: devCreateError.message });
+      }
+    }
+
     return res.json(updated);
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -376,19 +687,16 @@ router.patch('/:id/asignar', verificarToken, checkRole(['admin']), checkAdminPer
 router.delete('/:id', verificarToken, checkRole(['admin']), checkAdminPermission('guias.delete'), async (req, res) => {
   try {
     const { data: guia, error: findError } = await supabase
-      .from('guias').select('id, estado_actual').eq('id', req.params.id).single();
+      .from('guias').select('id, estado_actual, numero_guia').eq('id', req.params.id).single();
 
     if (findError || !guia) return res.status(404).json({ error: 'Guía no encontrada' });
-    if (guia.estado_actual !== 'registrado') {
-      return res.status(409).json({ error: 'Solo se pueden eliminar guías en estado "registrado"' });
-    }
 
     // Delete historial first (cascade should handle it, but to be safe)
     await supabase.from('historial_estados').delete().eq('guia_id', req.params.id);
     const { error: deleteError } = await supabase.from('guias').delete().eq('id', req.params.id);
     if (deleteError) return res.status(500).json({ error: deleteError.message });
 
-    return res.json({ message: 'Guía eliminada' });
+    return res.json({ message: `Guía eliminada (${guia.numero_guia || guia.id})` });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

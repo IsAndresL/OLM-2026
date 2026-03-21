@@ -41,6 +41,9 @@ export default function AdminUsuarios() {
     rol: 'repartidor',
     telefono: '',
     identificacion: '',
+    nombre_empresa: '',
+    nit_empresa: '',
+    avatarFile: null,
     es_principal: false,
     permisos: normalizeAdminPermissions(DEFAULT_ADMIN_PERMISSIONS),
   });
@@ -94,16 +97,25 @@ export default function AdminUsuarios() {
     try {
       const payload = {
         ...formData,
+        avatarFile: undefined,
         permisos: formData.rol === 'admin'
           ? normalizeAdminPermissions(formData.permisos, Boolean(formData.es_principal))
           : {},
       };
 
+      let usuarioCreadoId = null;
       if (editMode) {
         await usuariosService.editar(token, selectedId, payload);
-        mostrarAlerta('success', 'Usuario actualizado');
+        if (formData.avatarFile) {
+          await usuariosService.subirAvatar(token, selectedId, formData.avatarFile);
+        }
+        mostrarAlerta('success', 'Usuario actualizado correctamente');
       } else {
-        await usuariosService.crear(token, payload);
+        const created = await usuariosService.crear(token, payload);
+        usuarioCreadoId = created?.id;
+        if (formData.avatarFile && usuarioCreadoId) {
+          await usuariosService.subirAvatar(token, usuarioCreadoId, formData.avatarFile);
+        }
         mostrarAlerta('success', 'Usuario creado exitosamente');
       }
       setShowForm(false);
@@ -124,6 +136,9 @@ export default function AdminUsuarios() {
       rol: 'repartidor',
       telefono: '',
       identificacion: '',
+      nombre_empresa: '',
+      nit_empresa: '',
+      avatarFile: null,
       es_principal: false,
       permisos: normalizeAdminPermissions(DEFAULT_ADMIN_PERMISSIONS),
     });
@@ -144,6 +159,9 @@ export default function AdminUsuarios() {
       rol: u.rol,
       telefono: u.telefono || '',
       identificacion: u.identificacion || '',
+      nombre_empresa: u.empresa?.nombre || '',
+      nit_empresa: u.empresa?.nit || '',
+      avatarFile: null,
       es_principal: Boolean(u.es_principal),
       permisos: normalizeAdminPermissions(u.permisos || DEFAULT_ADMIN_PERMISSIONS, Boolean(u.es_principal)),
     });
@@ -298,12 +316,25 @@ export default function AdminUsuarios() {
                 <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6 font-body">
                   <div className="md:col-span-2 bg-gray-50 p-4 rounded-xl flex items-center gap-4 border border-gray-100 mb-2">
                     <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-inner border border-gray-200 text-gray-300 relative overflow-hidden group">
-                      <UserIcon size={24} />
+                      {formData.avatarFile ? (
+                        <img src={URL.createObjectURL(formData.avatarFile)} alt="preview" className="w-full h-full object-cover" />
+                      ) : (
+                        <UserIcon size={24} />
+                      )}
                     </div>
                     <div>
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Identidad Visual</p>
-                      <p className="text-sm text-gray-600">El avatar se sube después de crear el perfil.</p>
+                      <p className="text-sm text-gray-600">Puedes subir el avatar directamente en este formulario.</p>
                     </div>
+                    <label className="ml-auto px-3 py-2 text-xs font-bold rounded-lg bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 cursor-pointer">
+                      Seleccionar foto
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => setFormData({ ...formData, avatarFile: e.target.files?.[0] || null })}
+                      />
+                    </label>
                   </div>
 
                   <div>
@@ -320,10 +351,10 @@ export default function AdminUsuarios() {
                     </select>
                   </div>
 
-                  {formData.rol === 'empresa' && !editMode && (
+                  {formData.rol === 'empresa' && (
                     <>
                       <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Nombre de Empresa</label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Nombre de la Empresa</label>
                         <input
                           type="text" required
                           value={formData.nombre_empresa || ''}
@@ -333,7 +364,7 @@ export default function AdminUsuarios() {
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">NIT</label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">NIT de la Empresa</label>
                         <input
                           type="text" required
                           value={formData.nit_empresa || ''}
@@ -359,7 +390,7 @@ export default function AdminUsuarios() {
                   )}
 
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Nombre Completo</label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{formData.rol === 'empresa' ? 'Nombre del Representante' : 'Nombre Completo'}</label>
                     <input
                       type="text" required
                       value={formData.nombre_completo}
@@ -373,10 +404,9 @@ export default function AdminUsuarios() {
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Correo Electrónico</label>
                     <input
                       type="email" required
-                      disabled={editMode}
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none disabled:text-gray-400"
+                      className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none"
                       placeholder="usuario@peticion.com"
                     />
                   </div>
@@ -466,6 +496,7 @@ export default function AdminUsuarios() {
                       <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Identidad</th>
                       <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Contacto</th>
                       <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Rol</th>
+                      <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Empresa</th>
                       <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Estado</th>
                       <th className="px-6 py-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Acciones</th>
                     </tr>
@@ -494,6 +525,9 @@ export default function AdminUsuarios() {
                              </div>
                              <div>
                                <p className="text-sm font-bold text-gray-900 leading-snug">{u.nombre_completo}</p>
+                               {u.rol === 'empresa' && u.empresa?.nombre && (
+                                 <p className="text-[11px] text-emerald-700 font-semibold">{u.empresa.nombre}</p>
+                               )}
                                <p className="text-[10px] text-gray-400 font-mono">{u.identificacion || 'S/I'}</p>
                              </div>
                           </div>
@@ -513,6 +547,16 @@ export default function AdminUsuarios() {
                               </span>
                             )}
                           </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          {u.rol === 'empresa' ? (
+                            <div>
+                              <p className="text-sm font-semibold text-gray-800">{u.empresa?.nombre || 'Sin empresa'}</p>
+                              <p className="text-[10px] text-gray-400 font-mono">{u.empresa_id || 'Sin ID'}</p>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-400">-</span>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <button 
@@ -551,7 +595,7 @@ export default function AdminUsuarios() {
                     ))}
                     {usuarios.length === 0 && (
                       <tr>
-                        <td colSpan="5" className="px-6 py-12 text-center">
+                        <td colSpan="6" className="px-6 py-12 text-center">
                           <p className="text-gray-400 text-sm font-medium">No se encontraron usuarios registrados.</p>
                         </td>
                       </tr>

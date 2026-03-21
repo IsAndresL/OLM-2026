@@ -61,7 +61,10 @@ async function verificarToken(req, res, next) {
 
   const token = header.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      issuer: process.env.JWT_ISSUER || 'olm-backend',
+      audience: process.env.JWT_AUDIENCE || 'olm-app',
+    });
     const { data: usuario, error } = await supabase
       .from('usuarios')
       .select('id, nombre_completo, email, rol, empresa_id, activo, avatar_url, es_principal, permisos')

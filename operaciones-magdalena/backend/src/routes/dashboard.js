@@ -4,101 +4,133 @@ const { verificarToken, checkRole, checkAdminPermission } = require('../middlewa
 
 const router = express.Router();
 
+function toIsoDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-CA');
+}
+
 // GET /api/v1/dashboard/resumen - Resumen general (Admin)
 router.get('/resumen', verificarToken, checkRole(['admin']), checkAdminPermission('dashboard.view'), async (req, res) => {
   try {
     const today = new Date();
-    // Use user-provided date or fallback to today (YYYY-MM-DD)
-    const fechaParam = req.query.fecha || today.toLocaleDateString('en-CA'); 
+    const fechaParam = req.query.fecha || today.toLocaleDateString('en-CA');
+    const empresaId = req.query.empresa_id || null;
+    const repartidorId = req.query.repartidor_id || null;
 
-    // Fechas límites del día
     const fechaInicio = `${fechaParam}T00:00:00`;
     const fechaFin = `${fechaParam}T23:59:59`;
 
-    // 1. Obtener conteos básicos de todas las guías del sistema
-    const { data: todasGuias, error: guiasError } = await supabase
+    let guiasQuery = supabase
       .from('guias')
-      .select('id, empresa_id, repartidor_id, estado_actual, created_at');
-
-    if (guiasError) throw guiasError;
-
-    // Obtener historial del día seleccionado
-    const { data: historialHoy, error: histError } = await supabase
-      .from('historial_estados')
-      .select('guia_id, estado, created_at')
-      .gte('created_at', fechaInicio)
-      .lte('created_at', fechaFin)
+      .select('id, empresa_id, repartidor_id, estado_actual, created_at, updated_at, numero_guia, nombre_destinatario')
       .order('created_at', { ascending: false });
 
-    if (histError) throw histError;
+    if (empresaId) guiasQuery = guiasQuery.eq('empresa_id', empresaId);
+    if (repartidorId) guiasQuery = guiasQuery.eq('repartidor_id', repartidorId);
 
-    // Calcular KPIs
-    // - registradas hoy
-    const creadasHoy = todasGuias.filter(g => g.created_at >= fechaInicio && g.created_at <= fechaFin).length;
-    
-    // - estado_actual
-    const total_asignadas = todasGuias.filter(g => g.estado_actual === 'asignado').length;
-    const total_en_ruta = todasGuias.filter(g => g.estado_actual === 'en_ruta').length;
-    const sin_asignar = todasGuias.filter(g => g.estado_actual === 'registrado').length;
+    const { data: todasGuias, error: guiasError } = await guiasQuery;
+    if (guiasError) throw guiasError;
 
-    // Para entregadas, devueltas y novedades en ESTE DÍA usamos el historial_estados
-    // Contamos guías únicas que alcanzaron ese estado hoy
+    const guiaIds = (todasGuias || []).map((g) => g.id);
+    let historialHoy = [];
+
+    if (guiaIds.length > 0) {
+      const { data: historialData, error: histError } = await supabase
+        .from('historial_estados')
+        .select('guia_id, estado, created_at, usuario_id')
+        .in('guia_id', guiaIds)
+        .gte('created_at', fechaInicio)
+        .lte('created_at', fechaFin)
+        .order('created_at', { ascending: false });
+
+      if (histError) throw histError;
+      historialHoy = historialData || [];
+    }
+
+    const creadasHoy = (todasGuias || []).filter((g) => g.created_at >= fechaInicio && g.created_at <= fechaFin).length;
+    const total_asignadas = (todasGuias || []).filter((g) => g.estado_actual === 'asignado').length;
+    const total_en_ruta = (todasGuias || []).filter((g) => g.estado_actual === 'en_ruta').length;
+    const sin_asignar = (todasGuias || []).filter((g) => g.estado_actual === 'registrado').length;
+
     const guiasEntregadasHoy = new Set();
     const guiasDevueltasHoy = new Set();
     const guiasNovedadesHoy = new Set();
 
-    historialHoy.forEach(h => {
+    historialHoy.forEach((h) => {
       if (h.estado === 'entregado') guiasEntregadasHoy.add(h.guia_id);
       if (h.estado === 'devuelto') guiasDevueltasHoy.add(h.guia_id);
-      if (['no_contesto', 'direccion_incorrecta', 'reagendar'].includes(h.estado)) {
-        guiasNovedadesHoy.add(h.guia_id);
-      }
+      if (['no_contesto', 'direccion_incorrecta', 'reagendar'].includes(h.estado)) guiasNovedadesHoy.add(h.guia_id);
     });
 
     const entregadasCount = guiasEntregadasHoy.size;
     const novedadesCount = guiasNovedadesHoy.size;
     const devueltasCount = guiasDevueltasHoy.size;
+    const baseTasa = entregadasCount + novedadesCount + devueltasCount;
+    const tasa = baseTasa > 0 ? ((entregadasCount / baseTasa) * 100).toFixed(1) + '%' : '0.0%';
 
-    const basetTasa = entregadasCount + novedadesCount + devueltasCount;
-    const tasa = basetTasa > 0 ? ((entregadasCount / basetTasa) * 100).toFixed(1) + '%' : '0.0%';
+    let repQuery = supabase.from('usuarios').select('id, nombre_completo, activo').eq('rol', 'repartidor');
+    if (repartidorId) repQuery = repQuery.eq('id', repartidorId);
+    const { data: repartidores } = await repQuery;
 
-    // 2. Por Repartidor
-    const { data: repartidores } = await supabase.from('usuarios').select('id, nombre_completo, activo').eq('rol', 'repartidor');
-    const por_repartidor = (repartidores || []).map(rep => {
-      // cuantas asignadas hoy a este rep
+    const por_repartidor = (repartidores || []).map((rep) => {
       const repAsignadasHoy = new Set();
       const repEntregadasHoy = new Set();
       const repNovedadesHoy = new Set();
 
-      historialHoy.filter(h => h.usuario_id === rep.id).forEach(h => {
-        if (h.estado === 'asignado' || h.estado === 'en_ruta') repAsignadasHoy.add(h.guia_id);
-        if (h.estado === 'entregado') repEntregadasHoy.add(h.guia_id);
-        if (['no_contesto', 'direccion_incorrecta', 'reagendar'].includes(h.estado)) repNovedadesHoy.add(h.guia_id);
-      });
+      historialHoy
+        .filter((h) => h.usuario_id === rep.id)
+        .forEach((h) => {
+          if (h.estado === 'asignado' || h.estado === 'en_ruta') repAsignadasHoy.add(h.guia_id);
+          if (h.estado === 'entregado') repEntregadasHoy.add(h.guia_id);
+          if (['no_contesto', 'direccion_incorrecta', 'reagendar'].includes(h.estado)) repNovedadesHoy.add(h.guia_id);
+        });
 
-      const ea = repEntregadasHoy.size;
-      const na = repNovedadesHoy.size;
-      const t = (ea + na) > 0 ? ((ea / (ea + na)) * 100).toFixed(1) + '%' : '0.0%';
+      const entregadas = repEntregadasHoy.size;
+      const novedades = repNovedadesHoy.size;
+      const tasaRep = entregadas + novedades > 0 ? ((entregadas / (entregadas + novedades)) * 100).toFixed(1) + '%' : '0.0%';
 
       return {
         repartidor_id: rep.id,
         nombre_completo: rep.nombre_completo,
         asignadas: repAsignadasHoy.size,
-        entregadas: ea,
-        novedades: na,
-        tasa: t,
-        activo: rep.activo
+        entregadas,
+        novedades,
+        tasa: tasaRep,
+        activo: rep.activo,
       };
     });
 
-    // 3. Por Empresa
-    const { data: empresas } = await supabase.from('empresas').select('id, nombre');
-    const por_empresa = (empresas || []).map(emp => {
-      // Activas = todas las guías de la empresa que no han terminado
-      const activas = todasGuias.filter(g => g.empresa_id === emp.id && !['entregado', 'devuelto'].includes(g.estado_actual)).length;
-      
-      const entregadasHoyEmp = Array.from(guiasEntregadasHoy).filter(guiaId => {
-        const g = todasGuias.find(x => x.id === guiaId);
+    const { data: usuariosEmpresaActivos } = await supabase
+      .from('usuarios')
+      .select('empresa_id')
+      .eq('rol', 'empresa')
+      .eq('activo', true)
+      .not('empresa_id', 'is', null);
+
+    const empresaIdsActivasPorUsuario = [...new Set((usuariosEmpresaActivos || []).map((u) => u.empresa_id).filter(Boolean))];
+    let empresas = [];
+
+    if (empresaIdsActivasPorUsuario.length > 0) {
+      let empQuery = supabase
+        .from('empresas')
+        .select('id, nombre')
+        .eq('activa', true)
+        .in('id', empresaIdsActivasPorUsuario);
+
+      if (empresaId) empQuery = empQuery.eq('id', empresaId);
+
+      const { data: empresasData } = await empQuery;
+      empresas = empresasData || [];
+    }
+
+    const guiasById = new Map((todasGuias || []).map((g) => [g.id, g]));
+    const por_empresa = (empresas || []).map((emp) => {
+      const activas = (todasGuias || []).filter((g) => g.empresa_id === emp.id && !['entregado', 'devuelto'].includes(g.estado_actual)).length;
+
+      const entregadasHoyEmp = Array.from(guiasEntregadasHoy).filter((guiaId) => {
+        const g = guiasById.get(guiaId);
         return g && g.empresa_id === emp.id;
       }).length;
 
@@ -106,14 +138,12 @@ router.get('/resumen', verificarToken, checkRole(['admin']), checkAdminPermissio
         empresa_id: emp.id,
         nombre: emp.nombre,
         activas,
-        entregadas_hoy: entregadasHoyEmp
+        entregadas_hoy: entregadasHoyEmp,
       };
     });
 
-    // 4. Alertas operativas (Más de 24 horas estancadas)
     const limite24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    
-    const { data: guiasEstancadas } = await supabase
+    let alertasQuery = supabase
       .from('guias')
       .select('id, numero_guia, nombre_destinatario, updated_at, estado_actual')
       .in('estado_actual', ['asignado', 'en_ruta', 'no_contesto', 'reagendar'])
@@ -121,20 +151,28 @@ router.get('/resumen', verificarToken, checkRole(['admin']), checkAdminPermissio
       .order('updated_at', { ascending: true })
       .limit(10);
 
-    const alertas = (guiasEstancadas || []).map(g => {
-      const msSinceUpdate = Date.now() - new Date(g.updated_at).getTime();
-      const horas = Math.floor(msSinceUpdate / (1000 * 60 * 60));
+    if (empresaId) alertasQuery = alertasQuery.eq('empresa_id', empresaId);
+    if (repartidorId) alertasQuery = alertasQuery.eq('repartidor_id', repartidorId);
+
+    const { data: guiasEstancadas } = await alertasQuery;
+
+    const alertas = (guiasEstancadas || []).map((g) => {
+      const horas = Math.floor((Date.now() - new Date(g.updated_at).getTime()) / (1000 * 60 * 60));
       return {
         guia_id: g.id,
         numero_guia: g.numero_guia,
         nombre_destinatario: g.nombre_destinatario,
         estado_actual: g.estado_actual,
-        horas_sin_movimiento: horas
+        horas_sin_movimiento: horas,
       };
     });
 
     return res.json({
       fecha: fechaParam,
+      filtros: {
+        empresa_id: empresaId,
+        repartidor_id: repartidorId,
+      },
       kpis: {
         total_registradas: creadasHoy,
         total_asignadas,
@@ -143,13 +181,12 @@ router.get('/resumen', verificarToken, checkRole(['admin']), checkAdminPermissio
         total_novedades: novedadesCount,
         total_devueltas: devueltasCount,
         tasa_efectividad: tasa,
-        sin_asignar
+        sin_asignar,
       },
       por_repartidor,
       por_empresa,
-      alertas
+      alertas,
     });
-
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -158,69 +195,91 @@ router.get('/resumen', verificarToken, checkRole(['admin']), checkAdminPermissio
 // GET /api/v1/dashboard/tendencia - Gráfico de barras
 router.get('/tendencia', verificarToken, checkRole(['admin']), checkAdminPermission('dashboard.view'), async (req, res) => {
   try {
-    const dias = parseInt(req.query.dias) || 30;
-    const limitDays = Math.min(dias, 90);
-    const empresaId = req.query.empresa_id;
+    const dias = parseInt(req.query.dias, 10) || 30;
+    const empresaId = req.query.empresa_id || null;
+    const repartidorId = req.query.repartidor_id || null;
+    const fechaDesde = toIsoDate(req.query.fecha_desde);
+    const fechaHasta = toIsoDate(req.query.fecha_hasta);
 
-    // Rango de fechas
-    const endDate = new Date();
-    endDate.setHours(23, 59, 59, 999);
-    const startDate = new Date();
-    startDate.setDate(endDate.getDate() - limitDays + 1);
-    startDate.setHours(0, 0, 0, 0);
+    let startDate;
+    let endDate;
 
-    const strStart = startDate.toISOString();
-
-    let queryGuias = supabase.from('guias').select('created_at').gte('created_at', strStart);
-    let queryHist = supabase.from('historial_estados').select('estado, created_at').gte('created_at', strStart);
-
-    if (empresaId) {
-       queryGuias = queryGuias.eq('empresa_id', empresaId);
-       // Join en supabase REST no tan simple para historial filtrando empresa, pero 
-       // seleccionemos guiia_id y luego filtramos
-       const { data: gIds } = await supabase.from('guias').select('id').eq('empresa_id', empresaId);
-       const arr = gIds?.map(g => g.id) || [];
-       if (arr.length > 0) {
-           queryHist = queryHist.in('guia_id', arr);
-       } else {
-           // si no hay guias la empresa, retornar serie vacia o zeros
-           queryHist = queryHist.eq('id', 'uuid-imposible'); // forzar array vacio
-       }
+    if (fechaDesde && fechaHasta) {
+      startDate = new Date(`${fechaDesde}T00:00:00`);
+      endDate = new Date(`${fechaHasta}T23:59:59`);
+    } else {
+      const limitDays = Math.min(Math.max(dias, 1), 180);
+      endDate = new Date();
+      endDate.setHours(23, 59, 59, 999);
+      startDate = new Date(endDate);
+      startDate.setDate(endDate.getDate() - limitDays + 1);
+      startDate.setHours(0, 0, 0, 0);
     }
 
-    const [resGuias, resHist] = await Promise.all([queryGuias, queryHist]);
-    
+    if (startDate > endDate) {
+      return res.status(400).json({ error: 'Rango de fechas invalido' });
+    }
+
+    const strStart = startDate.toISOString();
+    const strEnd = endDate.toISOString();
+
+    let guiasRangoQuery = supabase
+      .from('guias')
+      .select('id, created_at')
+      .gte('created_at', strStart)
+      .lte('created_at', strEnd);
+
+    if (empresaId) guiasRangoQuery = guiasRangoQuery.eq('empresa_id', empresaId);
+    if (repartidorId) guiasRangoQuery = guiasRangoQuery.eq('repartidor_id', repartidorId);
+
+    let filteredGuideIds = null;
+    if (empresaId || repartidorId) {
+      let idsQuery = supabase.from('guias').select('id');
+      if (empresaId) idsQuery = idsQuery.eq('empresa_id', empresaId);
+      if (repartidorId) idsQuery = idsQuery.eq('repartidor_id', repartidorId);
+      const { data: idRows, error: idsError } = await idsQuery;
+      if (idsError) throw idsError;
+      filteredGuideIds = (idRows || []).map((g) => g.id);
+    }
+
+    let historialQuery = supabase
+      .from('historial_estados')
+      .select('guia_id, estado, created_at')
+      .gte('created_at', strStart)
+      .lte('created_at', strEnd);
+
+    if (filteredGuideIds && filteredGuideIds.length === 0) {
+      historialQuery = historialQuery.eq('id', 'uuid-imposible');
+    } else if (filteredGuideIds && filteredGuideIds.length > 0) {
+      historialQuery = historialQuery.in('guia_id', filteredGuideIds);
+    }
+
+    const [resGuias, resHist] = await Promise.all([guiasRangoQuery, historialQuery]);
     if (resGuias.error) throw resGuias.error;
     if (resHist.error) throw resHist.error;
 
-    // Construir serie de días
     const seriesMap = {};
-    for (let i = 0; i < limitDays; i++) {
-        const d = new Date(startDate);
-        d.setDate(d.getDate() + i);
-        const isoDate = d.toLocaleDateString('en-CA'); // YYYY-MM-DD
-        seriesMap[isoDate] = { fecha: isoDate, registradas: 0, entregadas: 0, novedades: 0, devueltas: 0 };
+    const pivotDate = new Date(startDate);
+    while (pivotDate <= endDate) {
+      const isoDate = pivotDate.toLocaleDateString('en-CA');
+      seriesMap[isoDate] = { fecha: isoDate, registradas: 0, entregadas: 0, novedades: 0, devueltas: 0 };
+      pivotDate.setDate(pivotDate.getDate() + 1);
     }
 
-    // Contar registradas (guias.created_at)
-    (resGuias.data || []).forEach(g => {
-        const d = g.created_at.substring(0, 10);
-        if (seriesMap[d]) seriesMap[d].registradas++;
+    (resGuias.data || []).forEach((g) => {
+      const d = g.created_at.substring(0, 10);
+      if (seriesMap[d]) seriesMap[d].registradas++;
     });
 
-    // Contar el resto (historial)
-    (resHist.data || []).forEach(h => {
-        const d = h.created_at.substring(0, 10);
-        if (seriesMap[d]) {
-            if (h.estado === 'entregado') seriesMap[d].entregadas++;
-            else if (h.estado === 'devuelto') seriesMap[d].devueltas++;
-            else if (['no_contesto', 'direccion_incorrecta', 'reagendar'].includes(h.estado)) seriesMap[d].novedades++;
-        }
+    (resHist.data || []).forEach((h) => {
+      const d = h.created_at.substring(0, 10);
+      if (!seriesMap[d]) return;
+      if (h.estado === 'entregado') seriesMap[d].entregadas++;
+      else if (h.estado === 'devuelto') seriesMap[d].devueltas++;
+      else if (['no_contesto', 'direccion_incorrecta', 'reagendar'].includes(h.estado)) seriesMap[d].novedades++;
     });
 
-    const serieTemporal = Object.values(seriesMap);
-    return res.json(serieTemporal);
-
+    return res.json(Object.values(seriesMap));
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

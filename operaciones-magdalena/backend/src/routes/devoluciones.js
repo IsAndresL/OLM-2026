@@ -122,6 +122,51 @@ router.get('/', verificarToken, checkRole(['admin', 'empresa']), checkAdminPermi
   try {
     const { estado, motivo, fecha_desde: fechaDesde, fecha_hasta: fechaHasta, empresa_id: empresaId } = req.query;
 
+    // Sincroniza automáticamente devoluciones faltantes para guías ya marcadas como devueltas.
+    if (req.user.rol === 'admin') {
+      let guiasDevueltasQuery = supabase
+        .from('guias')
+        .select('id, numero_guia, empresa_id, repartidor_id')
+        .eq('estado_actual', 'devuelto');
+
+      if (empresaId) guiasDevueltasQuery = guiasDevueltasQuery.eq('empresa_id', empresaId);
+
+      const { data: guiasDevueltas, error: guiasDevueltasError } = await guiasDevueltasQuery;
+      if (guiasDevueltasError) return res.status(500).json({ error: guiasDevueltasError.message });
+
+      const idsDevueltos = (guiasDevueltas || []).map((g) => g.id);
+      if (idsDevueltos.length > 0) {
+        const { data: existentes, error: existentesError } = await supabase
+          .from('devoluciones')
+          .select('guia_id')
+          .in('guia_id', idsDevueltos);
+
+        if (existentesError) return res.status(500).json({ error: existentesError.message });
+
+        const existentesSet = new Set((existentes || []).map((d) => d.guia_id));
+        const faltantes = (guiasDevueltas || []).filter((g) => !existentesSet.has(g.id));
+
+        if (faltantes.length > 0) {
+          const rows = faltantes.map((g) => ({
+            guia_id: g.id,
+            guia_retorno_id: null,
+            motivo: 'otro',
+            descripcion: `Creado automaticamente para guia devuelta ${g.numero_guia}`,
+            estado: 'en_bodega',
+            repartidor_id: g.repartidor_id || null,
+            admin_id: req.user.id,
+            foto_paquete_url: null,
+          }));
+
+          const { error: insertSyncError } = await supabase
+            .from('devoluciones')
+            .insert(rows);
+
+          if (insertSyncError) return res.status(500).json({ error: insertSyncError.message });
+        }
+      }
+    }
+
     let query = supabase
       .from('devoluciones')
       .select('id, guia_id, guia_retorno_id, motivo, descripcion, estado, repartidor_id, admin_id, foto_paquete_url, created_at')

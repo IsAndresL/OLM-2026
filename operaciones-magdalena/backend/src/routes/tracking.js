@@ -1,4 +1,5 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
 const { verificarToken, checkRole } = require('../middlewares/auth');
 const router = express.Router();
@@ -11,8 +12,8 @@ router.get('/:numero_guia', async (req, res) => {
     // Buscar la guía (case-insensitive)
     const { data: guia, error: guiaError } = await supabase
       .from('guias')
-      .select('id, numero_guia, nombre_destinatario, direccion_destinatario, ciudad_destino, estado_actual, created_at, repartidor_id')
-      .ilike('numero_guia', numero_guia.trim())
+      .select('id, numero_guia, ciudad_destino, estado_actual, created_at, repartidor_id')
+      .eq('numero_guia', numero_guia.trim().toUpperCase())
       .single();
 
     if (guiaError || !guia) {
@@ -63,13 +64,20 @@ router.get('/:numero_guia', async (req, res) => {
         });
     }
 
+    let tracking_token = null;
+    if (guia.estado_actual === 'en_ruta' && guia.repartidor_id) {
+      tracking_token = jwt.sign(
+        { rid: guia.repartidor_id, gid: guia.id, scope: 'tracking_public' },
+        process.env.JWT_SECRET,
+        { expiresIn: '15m' }
+      );
+    }
+
     return res.json({
       numero_guia: guia.numero_guia,
-      nombre_destinatario: guia.nombre_destinatario,
-      direccion_destinatario: guia.direccion_destinatario,
       ciudad_destino: guia.ciudad_destino,
-      repartidor_id: guia.repartidor_id,
       estado_actual: guia.estado_actual,
+      tracking_token,
       historial: historialPublico
     });
 

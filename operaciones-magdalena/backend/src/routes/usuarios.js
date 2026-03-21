@@ -11,7 +11,16 @@ const {
 } = require('../middlewares/auth');
 const router = express.Router();
 
-const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
+const upload = multer({
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+    const allowedExt = ['jpg', 'jpeg', 'png', 'webp'];
+    if (allowedMimes.includes(file.mimetype) && allowedExt.includes(ext)) return cb(null, true);
+    return cb(new Error('Archivo no permitido. Solo imagenes JPG, PNG o WEBP'));
+  },
+}); // 5MB
 
 function defaultAdminPermissions() {
   return normalizeAdminPermissions({
@@ -38,7 +47,7 @@ router.get('/', verificarToken, checkRole(['admin']), checkAdminPermission('usua
   const { rol, activo } = req.query;
   let query = supabase
     .from('usuarios')
-    .select('id, nombre_completo, email, rol, telefono, empresa_id, identificacion, activo, avatar_url, es_principal, permisos, created_at')
+    .select('id, nombre_completo, email, rol, telefono, empresa_id, identificacion, activo, avatar_url, es_principal, permisos, created_at, empresa:empresas(id, nombre, nit, email, telefono)')
     .order('created_at', { ascending: false });
   if (rol)    query = query.eq('rol', rol);
   if (activo !== undefined) query = query.eq('activo', activo === 'true');
@@ -158,12 +167,12 @@ router.patch('/:id/estado', verificarToken, checkRole(['admin']), checkAdminPerm
 
 // PUT /api/v1/usuarios/:id (Editar usuario)
 router.put('/:id', verificarToken, checkRole(['admin']), checkAdminPermission('usuarios.edit'), async (req, res) => {
-  const { nombre_completo, telefono, identificacion, permisos, es_principal } = req.body;
+  const { nombre_completo, telefono, identificacion, permisos, es_principal, email, nombre_empresa, nit_empresa } = req.body;
   if (!nombre_completo) return res.status(400).json({ error: 'Nombre requerido' });
 
   const { data: usuarioActual, error: fetchError } = await supabase
     .from('usuarios')
-    .select('id, rol, es_principal, permisos')
+    .select('id, rol, es_principal, permisos, empresa_id, email')
     .eq('id', req.params.id)
     .single();
 
@@ -193,10 +202,40 @@ router.put('/:id', verificarToken, checkRole(['admin']), checkAdminPermission('u
     }
   }
 
+  let nextEmail = usuarioActual.email;
+  if (typeof email === 'string' && email.trim().length > 0) {
+    nextEmail = email.trim().toLowerCase();
+  }
+
+  if (nextEmail !== usuarioActual.email) {
+    const { error: authEmailError } = await supabase.auth.admin.updateUserById(req.params.id, {
+      email: nextEmail,
+      email_confirm: true,
+    });
+    if (authEmailError) return res.status(400).json({ error: `No se pudo actualizar el correo en autenticacion: ${authEmailError.message}` });
+  }
+
+  if (usuarioActual.rol === 'empresa' && usuarioActual.empresa_id) {
+    const empresaUpdate = {};
+    if (typeof nombre_empresa === 'string' && nombre_empresa.trim()) empresaUpdate.nombre = nombre_empresa.trim();
+    if (typeof nit_empresa === 'string' && nit_empresa.trim()) empresaUpdate.nit = nit_empresa.trim();
+    if (typeof telefono === 'string') empresaUpdate.telefono = telefono || null;
+    if (nextEmail) empresaUpdate.email = nextEmail;
+
+    if (Object.keys(empresaUpdate).length > 0) {
+      const { error: empUpdateError } = await supabase
+        .from('empresas')
+        .update(empresaUpdate)
+        .eq('id', usuarioActual.empresa_id);
+      if (empUpdateError) return res.status(500).json({ error: `No se pudo actualizar la empresa: ${empUpdateError.message}` });
+    }
+  }
+
   const { data, error } = await supabase
     .from('usuarios')
     .update({ 
       nombre_completo: nombre_completo.trim(), 
+      email: nextEmail,
       telefono: telefono || null, 
       identificacion: identificacion ? identificacion.trim() : null,
       es_principal: finalEsPrincipal,

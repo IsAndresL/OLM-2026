@@ -8,14 +8,14 @@ import {
   Users, 
   Truck, 
   Map,
-  Route,
-  MapPinned,
   Undo2,
   HandCoins,
   Wallet,
   Settings,
   LogOut, 
   ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 
 const navItems = {
@@ -23,8 +23,6 @@ const navItems = {
     { to: '/admin/dashboard', label: 'Dashboard',  icon: 'chart' },
     { to: '/admin/guias',     label: 'Guías',      icon: 'doc' },
     { to: '/admin/mapa',      label: 'Mapa en vivo', icon: 'map' },
-    { to: '/admin/rutas',     label: 'Rutas', icon: 'route' },
-    { to: '/admin/zonas',     label: 'Zonas', icon: 'zone' },
     { to: '/admin/devoluciones', label: 'Devoluciones', icon: 'return' },
     { to: '/admin/usuarios',  label: 'Usuarios',   icon: 'users' },
     { to: '/admin/liquidaciones', label: 'Liquidaciones', icon: 'money' },
@@ -48,8 +46,6 @@ function Icon({ name, className }) {
     case 'users': return <Users {...props} />;
     case 'truck': return <Truck {...props} />;
     case 'map': return <Map {...props} />;
-    case 'route': return <Route {...props} />;
-    case 'zone': return <MapPinned {...props} />;
     case 'return': return <Undo2 {...props} />;
     case 'money': return <HandCoins {...props} />;
     case 'cash': return <Wallet {...props} />;
@@ -62,13 +58,12 @@ function Icon({ name, className }) {
 export default function Layout({ children }) {
   const { user, logout, hasPermission } = useAuth();
   const navigate = useNavigate();
+  const [sidebarVisible, setSidebarVisible] = useState(true);
   const items = (navItems[user?.rol] || []).filter((item) => {
     if (user?.rol !== 'admin') return true;
     if (item.to === '/admin/dashboard') return hasPermission('dashboard.view');
     if (item.to === '/admin/guias') return hasPermission('guias.view');
     if (item.to === '/admin/mapa') return hasPermission('mapa.view');
-    if (item.to === '/admin/rutas') return hasPermission('rutas.manage');
-    if (item.to === '/admin/zonas') return hasPermission('zonas.manage');
     if (item.to === '/admin/devoluciones') return hasPermission('devoluciones.view');
     if (item.to === '/admin/usuarios') return hasPermission('usuarios.view');
     if (item.to === '/admin/liquidaciones') return hasPermission('liquidaciones.view');
@@ -82,15 +77,30 @@ export default function Layout({ children }) {
     setAvatarError(false);
   }, [user?.avatar_url]);
 
+  useEffect(() => {
+    const saved = window.localStorage.getItem('olm_sidebar_visible');
+    if (saved === '0') setSidebarVisible(false);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('olm_sidebar_visible', sidebarVisible ? '1' : '0');
+  }, [sidebarVisible]);
+
   function handleLogout() {
     logout();
     navigate('/login');
   }
 
+  function toggleSidebar() {
+    setSidebarVisible((prev) => !prev);
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col fixed h-full">
+      <aside
+        className={`w-64 bg-white border-r border-gray-200 flex flex-col fixed h-full z-30 transition-transform duration-300 ${sidebarVisible ? 'translate-x-0' : '-translate-x-full'}`}
+      >
         {/* Brand */}
         <div className="px-6 py-5 border-b border-gray-100">
           <div className="flex items-center gap-3">
@@ -150,12 +160,21 @@ export default function Layout({ children }) {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 ml-64">
+      <div className={`flex-1 transition-all duration-300 ${sidebarVisible ? 'ml-64' : 'ml-0'}`}>
         {/* Top header */}
         <header className="bg-white border-b border-gray-200 px-8 py-4 flex items-center justify-between sticky top-0 z-10">
-          <div>
-            <p className="text-sm text-gray-500">Bienvenido,</p>
-            <h2 className="text-lg font-semibold text-gray-900">{user?.nombre_completo}</h2>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleSidebar}
+              className="w-10 h-10 rounded-xl border border-gray-200 text-gray-600 hover:text-brand-primary hover:border-brand-primary/30 hover:bg-brand-light/10 transition-colors flex items-center justify-center"
+              title={sidebarVisible ? 'Ocultar menu lateral' : 'Mostrar menu lateral'}
+            >
+              {sidebarVisible ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+            </button>
+            <div>
+              <p className="text-sm text-gray-500">Bienvenido,</p>
+              <h2 className="text-lg font-semibold text-gray-900">{user?.nombre_completo}</h2>
+            </div>
           </div>
           <button
             onClick={handleLogout}

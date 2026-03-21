@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { MapContainer, TileLayer } from 'react-leaflet';
+import { useEffect, useMemo } from 'react';
+import { MapContainer, TileLayer, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
@@ -7,6 +7,15 @@ import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({ iconUrl: markerIcon, shadowUrl: markerShadow });
+
+function RecenterOnChange({ center, zoom }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!Array.isArray(center) || center.length !== 2) return;
+    map.setView(center, map.getZoom() || zoom, { animate: true });
+  }, [map, center, zoom]);
+  return null;
+}
 
 export default function MapaBase({
   center = [11.2408, -74.1990],
@@ -23,6 +32,7 @@ export default function MapaBase({
   return (
     <div style={{ height, borderRadius: '12px', overflow: 'hidden' }}>
       <MapContainer center={safeCenter} zoom={zoom} style={{ height: '100%', width: '100%' }} scrollWheelZoom={scrollWheelZoom}>
+        <RecenterOnChange center={safeCenter} zoom={zoom} />
         <TileLayer
           attribution='© OpenStreetMap contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

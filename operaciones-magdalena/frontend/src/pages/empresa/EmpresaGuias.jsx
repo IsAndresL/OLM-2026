@@ -1,8 +1,42 @@
 import { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { guiasService, etiquetasService, descargarArchivo, zonasService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import Layout from '../../components/Layout';
 import BadgeEstado from '../../components/BadgeEstado';
+
+const columnasObligatoriasBulk = [
+  'nombre_remitente',
+  'nombre_destinatario',
+  'telefono_destinatario',
+  'direccion_destinatario',
+  'ciudad_destino',
+];
+
+const columnasOpcionalesBulk = [
+  'barrio',
+  'descripcion_paquete',
+  'peso_kg',
+  'valor_declarado',
+  'zona_id',
+  'lat',
+  'lng',
+];
+
+const ayudaColumnasBulk = {
+  nombre_remitente: 'Persona o empresa que envia el paquete.',
+  nombre_destinatario: 'Persona que recibe el paquete.',
+  telefono_destinatario: 'Telefono de contacto del destinatario.',
+  direccion_destinatario: 'Direccion exacta de entrega.',
+  ciudad_destino: 'Ciudad donde se entrega la guia.',
+  barrio: 'Barrio para mejorar zona y ruta.',
+  descripcion_paquete: 'Que contiene el envio.',
+  peso_kg: 'Peso del paquete en kilogramos.',
+  valor_declarado: 'Valor comercial declarado del paquete.',
+  zona_id: 'UUID de zona (si ya lo tienes).',
+  lat: 'Latitud del punto de entrega.',
+  lng: 'Longitud del punto de entrega.',
+};
 
 export default function EmpresaGuias() {
   const { token } = useAuth();
@@ -49,7 +83,10 @@ export default function EmpresaGuias() {
 
   const handleSearch = (e) => {
     e.preventDefault();
-    setFiltros({ ...filtros, page: 1 });
+    if (filtros.page !== 1) {
+      setFiltros({ ...filtros, page: 1 });
+      return;
+    }
     cargarGuias();
   };
 
@@ -140,6 +177,36 @@ export default function EmpresaGuias() {
     }
   };
 
+  const descargarPlantillaBulk = (conEjemplo = false) => {
+    const headers = [...columnasObligatoriasBulk, ...columnasOpcionalesBulk];
+    const filas = [headers];
+
+    if (conEjemplo) {
+      filas.push(
+        [
+          'Comercial OLM',
+          'Maria Gomez',
+          '3015551122',
+          'Carrera 15 # 8-90',
+          'Santa Marta',
+          'Prado',
+          'Sobre documentos',
+          '0.3',
+          '50000',
+          '',
+          '',
+          '',
+        ]
+      );
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(filas);
+    ws['!cols'] = headers.map((h) => ({ wch: Math.max(18, h.length + 2) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Guias');
+    XLSX.writeFile(wb, conEjemplo ? 'plantilla-guias-ejemplo.xlsx' : 'plantilla-guias-vacia.xlsx');
+  };
+
   const toggleSelect = (id) => {
     if (selectedIds.includes(id)) setSelectedIds(selectedIds.filter(x => x !== id));
     else setSelectedIds([...selectedIds, id]);
@@ -164,7 +231,7 @@ export default function EmpresaGuias() {
             </button>
           )}
           <button onClick={() => setIsModalBulkOpen(true)} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            Cargar Excel
+            Subir guias en formato Excel
           </button>
           <button onClick={() => setIsModalCrearOpen(true)} className="bg-brand-primary hover:bg-brand-light text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition-colors">
             + Nueva Guía
@@ -344,16 +411,88 @@ export default function EmpresaGuias() {
 
       {isModalBulkOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
             <div className="p-5 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="font-title text-lg text-brand-dark">Importar Guías (Excel)</h3>
+              <h3 className="font-title text-lg text-brand-dark">Subir guias en formato Excel</h3>
               <button onClick={() => setIsModalBulkOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
             </div>
-            <div className="p-6 font-body text-center">
-              <p className="text-sm text-gray-600 mb-4">El archivo debe contener las columnas: <br/><code className="text-xs bg-gray-100 p-1 rounded">nombre_remitente, nombre_destinatario, direccion_destinatario, telefono_destinatario, ciudad_destino</code></p>
-              <form id="bulkForm" onSubmit={handleBulkUpload}>
-                <input type="file" name="archivo" accept=".xlsx,.csv" required className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-brand-primary/10 file:text-brand-primary hover:file:bg-brand-primary/20" />
-              </form>
+            <div className="p-6 font-body overflow-y-auto">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                    <h4 className="font-subtitle text-sm font-bold text-blue-900 mb-2">Formato permitido</h4>
+                    <p className="text-xs text-blue-800">Acepta archivos .xlsx o .csv. Maximo 5MB. Solo toma la primera hoja del Excel.</p>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <h4 className="font-subtitle text-sm font-bold text-gray-900 mb-2">Columnas obligatorias</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {columnasObligatoriasBulk.map((c) => (
+                        <span key={c} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-50 text-red-700 border border-red-100">{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <h4 className="font-subtitle text-sm font-bold text-gray-900 mb-2">Columnas opcionales</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {columnasOpcionalesBulk.map((c) => (
+                        <span key={c} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100">{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-amber-100 bg-amber-50/70 p-4">
+                    <p className="text-xs text-amber-900">Como empresa no necesitas columna <strong>empresa_id</strong>, el sistema la asigna automaticamente.</p>
+                    <p className="text-xs text-amber-900 mt-2">Si ves <strong>ing</strong> en algun archivo, es un error de escritura: debe ser <strong>lng</strong> (longitud).</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <h4 className="font-subtitle text-sm font-bold text-gray-900 mb-2">Vista rapida de columnas</h4>
+                    <div className="overflow-x-auto rounded-lg border border-gray-100">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50 text-gray-600 uppercase">
+                          <tr>
+                            <th className="p-2 text-left">Columna</th>
+                            <th className="p-2 text-left">Tipo</th>
+                            <th className="p-2 text-left">Ayuda corta</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {columnasObligatoriasBulk.map((c) => (
+                            <tr key={`req-${c}`}>
+                              <td className="p-2 font-medium text-gray-800">{c}</td>
+                              <td className="p-2 text-red-600">Obligatoria</td>
+                              <td className="p-2 text-gray-600">{ayudaColumnasBulk[c]}</td>
+                            </tr>
+                          ))}
+                          {columnasOpcionalesBulk.map((c) => (
+                            <tr key={`opt-${c}`}>
+                              <td className="p-2 font-medium text-gray-800">{c}</td>
+                              <td className="p-2 text-emerald-600">Opcional</td>
+                              <td className="p-2 text-gray-600">{ayudaColumnasBulk[c]}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <h4 className="font-subtitle text-sm font-bold text-gray-900 mb-3">Plantillas descargables</h4>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => descargarPlantillaBulk(false)} className="px-3 py-2 text-xs font-bold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700">
+                        Descargar plantilla vacia (XLSX)
+                      </button>
+                      <button type="button" onClick={() => descargarPlantillaBulk(true)} className="px-3 py-2 text-xs font-bold rounded-lg bg-brand-primary/10 hover:bg-brand-primary/20 text-brand-primary">
+                        Descargar plantilla con ejemplo (XLSX)
+                      </button>
+                    </div>
+                  </div>
+                  <form id="bulkForm" onSubmit={handleBulkUpload} className="rounded-xl border border-dashed border-gray-300 p-4">
+                    <label className="block text-xs font-semibold text-gray-600 mb-2">Selecciona archivo (.xlsx o .csv)</label>
+                    <input type="file" name="archivo" accept=".xlsx,.csv" required className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-brand-primary/10 file:text-brand-primary hover:file:bg-brand-primary/20" />
+                  </form>
+                </div>
+              </div>
             </div>
             <div className="p-5 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 rounded-b-xl">
               <button onClick={() => setIsModalBulkOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-600">Cancelar</button>

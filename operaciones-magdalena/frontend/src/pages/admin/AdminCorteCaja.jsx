@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, HandCoins } from 'lucide-react';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import Layout from '../../components/Layout';
-import { codService } from '../../services/api';
+import { codService, empresasService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { formatCOP, formatFecha } from '../../utils/formato';
 
@@ -25,7 +25,14 @@ export default function AdminCorteCaja() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [cortes, setCortes] = useState([]);
-  const [filtros, setFiltros] = useState({ estado: '', repartidor_id: '' });
+  const [empresas, setEmpresas] = useState([]);
+  const [resumenCirculacion, setResumenCirculacion] = useState({
+    total_en_circulacion: 0,
+    total_guias_en_circulacion: 0,
+    por_repartidor: [],
+    por_guia: [],
+  });
+  const [filtros, setFiltros] = useState({ estado: '', repartidor_id: '', empresa_id: '' });
 
   const [modalOpen, setModalOpen] = useState(false);
   const [detalle, setDetalle] = useState(null);
@@ -37,8 +44,17 @@ export default function AdminCorteCaja() {
     setLoading(true);
     setErrorMsg('');
     try {
-      const data = await codService.listarCortes(token, params);
-      setCortes(data || []);
+      const [cortesData, resumenData] = await Promise.all([
+        codService.listarCortes(token, params),
+        codService.resumenAdmin(token, params),
+      ]);
+      setCortes(cortesData || []);
+      setResumenCirculacion(resumenData || {
+        total_en_circulacion: 0,
+        total_guias_en_circulacion: 0,
+        por_repartidor: [],
+        por_guia: [],
+      });
     } catch (err) {
       setErrorMsg(err.message || 'No se pudo cargar la caja de contraentrega');
     } finally {
@@ -48,7 +64,15 @@ export default function AdminCorteCaja() {
 
   useEffect(() => {
     cargarCortes();
-  }, []);
+    (async () => {
+      try {
+        const data = await empresasService.listar(token);
+        setEmpresas(data || []);
+      } catch (_err) {
+        setEmpresas([]);
+      }
+    })();
+  }, [token]);
 
   async function abrirVerificacion(corteId) {
     try {
@@ -95,10 +119,10 @@ export default function AdminCorteCaja() {
       .filter((c) => c.estado === 'pendiente')
       .reduce((acc, c) => acc + Number(c.monto_declarado || 0), 0);
 
-    const enCirculacion = Math.max(0, recaudadoHoy + pendienteEntrega - entregadoSede);
+    const enCirculacion = Number(resumenCirculacion?.total_en_circulacion || 0);
 
     return { enCirculacion, recaudadoHoy, entregadoSede, pendienteEntrega };
-  }, [cortes]);
+  }, [cortes, resumenCirculacion]);
 
   const diferencia = Number(montoRecibido || 0) - Number(detalle?.monto_declarado || 0);
 
@@ -118,8 +142,81 @@ export default function AdminCorteCaja() {
         <InfoCard label="Pendiente entrega" value={formatCOP(resumen.pendienteEntrega)} />
       </div>
 
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <p className="text-xs uppercase tracking-widest text-gray-500 font-bold">En circulacion por conductor</p>
+            <p className="text-sm text-gray-500 mt-1">{resumenCirculacion.total_guias_en_circulacion || 0} guias COD asignadas</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-white text-xs uppercase text-gray-500 font-bold">
+                <tr>
+                  <th className="p-3 text-left">Conductor</th>
+                  <th className="p-3 text-left">Guias</th>
+                  <th className="p-3 text-left">Pendientes</th>
+                  <th className="p-3 text-left">Cobradas</th>
+                  <th className="p-3 text-left">Monto</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {(resumenCirculacion.por_repartidor || []).length === 0 ? (
+                  <tr><td colSpan="5" className="p-4 text-center text-gray-400">No hay contraentregas asignadas en circulacion.</td></tr>
+                ) : (
+                  (resumenCirculacion.por_repartidor || []).map((r) => (
+                    <tr key={r.repartidor_id}>
+                      <td className="p-3 font-semibold text-gray-800">{r.repartidor_nombre}</td>
+                      <td className="p-3">{r.total_guias}</td>
+                      <td className="p-3">{r.pendientes_cobro}</td>
+                      <td className="p-3">{r.cobradas_no_entregadas}</td>
+                      <td className="p-3 font-semibold">{formatCOP(r.total_monto)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <p className="text-xs uppercase tracking-widest text-gray-500 font-bold">Detalle por guia en circulacion</p>
+            <p className="text-sm text-gray-500 mt-1">Monto comprometido por pedido COD asignado</p>
+          </div>
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-white text-xs uppercase text-gray-500 font-bold sticky top-0">
+                <tr>
+                  <th className="p-3 text-left">Guia</th>
+                  <th className="p-3 text-left">Conductor</th>
+                  <th className="p-3 text-left">Estado COD</th>
+                  <th className="p-3 text-left">Monto</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {(resumenCirculacion.por_guia || []).length === 0 ? (
+                  <tr><td colSpan="4" className="p-4 text-center text-gray-400">No hay guias COD asignadas para mostrar.</td></tr>
+                ) : (
+                  (resumenCirculacion.por_guia || []).map((g) => (
+                    <tr key={g.guia_id}>
+                      <td className="p-3">
+                        <p className="font-semibold text-gray-800">{g.numero_guia}</p>
+                        <p className="text-xs text-gray-500">{g.nombre_destinatario}</p>
+                      </td>
+                      <td className="p-3">{g.repartidor_nombre}</td>
+                      <td className="p-3 capitalize">{g.cod_estado}</td>
+                      <td className="p-3 font-semibold">{formatCOP(g.monto)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           <select
             value={filtros.estado}
             onChange={(e) => setFiltros((prev) => ({ ...prev, estado: e.target.value }))}
@@ -136,8 +233,18 @@ export default function AdminCorteCaja() {
             className="px-3 py-2 border border-gray-300 rounded-xl text-sm"
             placeholder="ID repartidor (opcional)"
           />
+          <select
+            value={filtros.empresa_id}
+            onChange={(e) => setFiltros((prev) => ({ ...prev, empresa_id: e.target.value }))}
+            className="px-3 py-2 border border-gray-300 rounded-xl text-sm"
+          >
+            <option value="">Todas las empresas</option>
+            {empresas.map((empresa) => (
+              <option key={empresa.id} value={empresa.id}>{empresa.nombre}</option>
+            ))}
+          </select>
           <button onClick={() => cargarCortes(filtros)} className="px-4 py-2 rounded-xl bg-gray-900 text-white text-sm font-bold">Buscar</button>
-          <button onClick={() => { setFiltros({ estado: '', repartidor_id: '' }); cargarCortes({}); }} className="px-4 py-2 rounded-xl bg-gray-100 text-gray-700 text-sm font-bold">Limpiar</button>
+          <button onClick={() => { setFiltros({ estado: '', repartidor_id: '', empresa_id: '' }); cargarCortes({}); }} className="px-4 py-2 rounded-xl bg-gray-100 text-gray-700 text-sm font-bold">Limpiar</button>
         </div>
       </div>
 

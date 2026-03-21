@@ -112,12 +112,18 @@ CREATE OR REPLACE FUNCTION generar_numero_guia()
 RETURNS VARCHAR AS $$
 DECLARE
   fecha_str VARCHAR(8);
-  secuencia INT;
+  candidato VARCHAR(30);
+  existe BOOLEAN;
 BEGIN
   fecha_str := TO_CHAR(NOW(), 'YYYYMMDD');
-  SELECT COUNT(*) + 1 INTO secuencia
-  FROM guias WHERE numero_guia LIKE 'MAG-' || fecha_str || '-%';
-  RETURN 'MAG-' || fecha_str || '-' || LPAD(secuencia::TEXT, 4, '0');
+
+  LOOP
+    candidato := 'MAG-' || fecha_str || '-' || LPAD(FLOOR(RANDOM() * 10000)::TEXT, 4, '0');
+    SELECT EXISTS(SELECT 1 FROM guias WHERE numero_guia = candidato) INTO existe;
+    EXIT WHEN NOT existe;
+  END LOOP;
+
+  RETURN candidato;
 END;
 $$ LANGUAGE plpgsql;
 

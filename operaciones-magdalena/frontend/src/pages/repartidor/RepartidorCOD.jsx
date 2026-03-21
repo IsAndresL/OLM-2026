@@ -1,31 +1,43 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, HandCoins } from 'lucide-react';
 import LayoutMovil from '../../components/LayoutMovil';
-import { codService } from '../../services/api';
+import { codService, repartidorService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { formatCOP, formatFecha } from '../../utils/formato';
+import useAlerta from '../../hooks/useAlerta';
+import Alerta from '../../components/Alerta';
 
 export default function RepartidorCOD() {
   const { token } = useAuth();
+  const { alerta, mostrarAlerta, cerrarAlerta } = useAlerta();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [okMsg, setOkMsg] = useState('');
   const [pendientes, setPendientes] = useState([]);
+  const [porCobrar, setPorCobrar] = useState([]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
-  const [montoDeclarado, setMontoDeclarado] = useState('');
 
   async function cargarPendientes() {
     setLoading(true);
-    setErrorMsg('');
     try {
-      const data = await codService.pendientesRepartidor(token);
+      const [data, misGuias] = await Promise.all([
+        codService.pendientesRepartidor(token),
+        repartidorService.misGuias(token),
+      ]);
       setPendientes(data || []);
+
+      const activasCod = (misGuias || []).filter((g) => (
+        g.es_cod &&
+        Number(g.monto_cod || 0) > 0 &&
+        ['asignado', 'en_ruta', 'no_contesto', 'reagendar', 'direccion_incorrecta'].includes(g.estado_actual) &&
+        g.cod_estado !== 'cobrado' &&
+        g.cod_estado !== 'entregado_sede'
+      ));
+      setPorCobrar(activasCod);
     } catch (err) {
-      setErrorMsg(err.message || 'No se pudo cargar tu saldo pendiente de contraentrega');
+      mostrarAlerta('error', err.message || 'No se pudo cargar tu saldo pendiente de contraentrega');
     } finally {
       setLoading(false);
     }
@@ -37,13 +49,17 @@ export default function RepartidorCOD() {
 
   const resumen = useMemo(() => {
     const total = pendientes.reduce((acc, g) => acc + Number(g.cod_cobrado || g.monto_cod || 0), 0);
-    return { total, guias: pendientes.length };
-  }, [pendientes]);
+    const porCobrarTotal = porCobrar.reduce((acc, g) => acc + Number(g.monto_cod || 0), 0);
+    return {
+      total,
+      guias: pendientes.length,
+      porCobrarTotal,
+      porCobrarGuias: porCobrar.length,
+    };
+  }, [pendientes, porCobrar]);
 
   function abrirModal() {
     setSelectedIds(pendientes.map((g) => g.guia_id));
-    setMontoDeclarado(String(resumen.total));
-    setOkMsg('');
     setModalOpen(true);
   }
 
@@ -63,23 +79,21 @@ export default function RepartidorCOD() {
 
   async function confirmarEntrega() {
     if (selectedIds.length === 0) {
-      setErrorMsg('Selecciona al menos una guia de contraentrega.');
+      mostrarAlerta('warning', 'Selecciona al menos una guia de contraentrega.');
       return;
     }
 
     setSaving(true);
-    setErrorMsg('');
-    setOkMsg('');
     try {
       await codService.registrarCorte(token, {
         guia_ids: selectedIds,
-        monto_declarado: Number(montoDeclarado),
+        monto_declarado: Number(totalSeleccionado),
       });
       setModalOpen(false);
-      setOkMsg('Entrega registrada. El administrador la verificara.');
+      mostrarAlerta('success', 'Entrega registrada. El administrador la verificara.');
       await cargarPendientes();
     } catch (err) {
-      setErrorMsg(err.message || 'No se pudo registrar la entrega a sede');
+      mostrarAlerta('error', err.message || 'No se pudo registrar la entrega a sede');
     } finally {
       setSaving(false);
     }
@@ -87,10 +101,8 @@ export default function RepartidorCOD() {
 
   return (
     <LayoutMovil title="Mi contraentrega">
+      <Alerta {...alerta} onClose={cerrarAlerta} />
       <div className="space-y-4 pb-24">
-        {errorMsg && <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm">{errorMsg}</div>}
-        {okMsg && <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm">{okMsg}</div>}
-
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
           <p className="text-xs uppercase tracking-widest text-gray-500 font-bold mb-1">Total a entregar en sede</p>
           <p className="text-3xl font-title text-gray-900">{formatCOP(resumen.total)}</p>
@@ -102,6 +114,36 @@ export default function RepartidorCOD() {
           >
             Registrar entrega a sede
           </button>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-amber-100 shadow-sm p-4">
+          <p className="text-xs uppercase tracking-widest text-amber-700 font-bold mb-1">Por cobrar en ruta</p>
+          <p className="text-3xl font-title text-amber-700">{formatCOP(resumen.porCobrarTotal)}</p>
+          <p className="text-sm text-gray-500 mt-1">{resumen.porCobrarGuias} guias COD activas</p>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-amber-100 shadow-sm p-4">
+          <h3 className="font-title text-lg text-gray-900 mb-3">Guias COD por cobrar</h3>
+          {loading ? (
+            <p className="text-sm text-gray-400">Cargando...</p>
+          ) : porCobrar.length === 0 ? (
+            <p className="text-sm text-gray-500">No tienes guias COD pendientes por cobrar en este momento.</p>
+          ) : (
+            <div className="space-y-3">
+              {porCobrar.map((guia) => (
+                <div key={guia.id} className="rounded-xl border border-amber-100 p-3 bg-amber-50">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-widest text-amber-700">{guia.numero_guia}</p>
+                      <p className="text-sm font-semibold text-gray-800">{guia.nombre_destinatario}</p>
+                      <p className="text-xs text-gray-500">Estado guía: {guia.estado_actual}</p>
+                    </div>
+                    <span className="text-sm font-bold text-amber-700">{formatCOP(guia.monto_cod || 0)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
@@ -164,12 +206,10 @@ export default function RepartidorCOD() {
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Monto que vas a entregar</label>
                 <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={montoDeclarado}
-                  onChange={(e) => setMontoDeclarado(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm"
+                  type="text"
+                  value={formatCOP(totalSeleccionado)}
+                  readOnly
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700"
                 />
               </div>
             </div>

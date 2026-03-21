@@ -7,9 +7,15 @@ const router = express.Router();
 
 // POST /api/v1/auth/login
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
+  const rawEmail = String(req.body?.email || '').trim().toLowerCase();
+  const rawPassword = String(req.body?.password || '');
+
+  if (!rawEmail || !rawPassword)
     return res.status(400).json({ error: 'Email y contraseña requeridos' });
+
+  if (rawEmail.length > 254 || rawPassword.length > 256) {
+    return res.status(400).json({ error: 'Credenciales inválidas' });
+  }
 
   // Use a fresh client for signIn to avoid polluting the shared client's auth context
   const authClient = createClient(
@@ -19,7 +25,7 @@ router.post('/login', async (req, res) => {
   );
 
   const { data: authData, error: authError } = await authClient.auth.signInWithPassword({
-    email: email.trim().toLowerCase(), password
+    email: rawEmail, password: rawPassword
   });
   if (authError || !authData.user)
     return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -32,14 +38,20 @@ router.post('/login', async (req, res) => {
     .single();
 
   if (userError || !usuario)
-    return res.status(403).json({ error: 'Usuario sin perfil. Contacta al administrador.' });
+    return res.status(401).json({ error: 'Acceso no autorizado' });
   if (!usuario.activo)
-    return res.status(403).json({ error: 'Cuenta desactivada' });
+    return res.status(401).json({ error: 'Acceso no autorizado' });
+  if (!['admin', 'empresa', 'repartidor'].includes(usuario.rol))
+    return res.status(401).json({ error: 'Acceso no autorizado' });
 
   const token = jwt.sign(
     { sub: usuario.id, rol: usuario.rol, empresa_id: usuario.empresa_id },
     process.env.JWT_SECRET,
-    { expiresIn: '8h' }
+    {
+      expiresIn: '8h',
+      issuer: process.env.JWT_ISSUER || 'olm-backend',
+      audience: process.env.JWT_AUDIENCE || 'olm-app',
+    }
   );
 
   return res.json({

@@ -6,7 +6,10 @@ import {
   AlertTriangle, 
   TrendingUp, 
   Clock, 
-  ArrowRight
+  ArrowRight,
+  ArrowUpRight,
+  SearchCheck,
+  ShieldCheck
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -52,6 +55,13 @@ function KPICard({ titulo, valor, subtitulo, esTasa, icon: IconComponent, colorC
       )}
     </div>
   );
+}
+
+function porcentajeNumero(valor) {
+  if (valor === undefined || valor === null) return 0;
+  const limpio = String(valor).replace('%', '').trim();
+  const numero = Number.parseFloat(limpio);
+  return Number.isNaN(numero) ? 0 : numero;
 }
 
 
@@ -110,6 +120,7 @@ export default function EmpresaDashboard() {
   };
 
   const kpis = data?.kpis || {};
+  const scoreCliente = Math.max(0, Math.min(100, Math.round(porcentajeNumero(kpis.tasa_efectividad) - Number(kpis.total_novedades || 0) * 2)));
 
   return (
     <Layout rol="empresa">
@@ -123,6 +134,38 @@ export default function EmpresaDashboard() {
         <button onClick={handleExportar} disabled={exportLoading} className="bg-brand-navy hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2">
           <Download className="w-4 h-4" /> {exportLoading ? 'Exportando...' : 'Exportar Mis Guías'}
         </button>
+      </div>
+
+      <div className="mb-8 rounded-[2rem] overflow-hidden border border-brand-primary/10 bg-gradient-to-r from-brand-navy via-brand-dark to-brand-primary text-white shadow-lg shadow-brand-primary/10">
+        <div className="grid grid-cols-1 lg:grid-cols-3">
+          <div className="lg:col-span-2 p-6 lg:p-8">
+            <p className="text-xs uppercase tracking-[0.2em] text-white/70 font-black mb-2">Vista ejecutiva</p>
+            <h2 className="font-title text-2xl lg:text-3xl mb-2">Seguimiento comercial de tus envios</h2>
+            <p className="text-sm text-white/80 max-w-xl">Controla volumen, calidad de entrega y estado de tus guias sin salir del panel.</p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Link to="/empresa/guias" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white text-brand-dark text-xs font-black uppercase tracking-wider hover:bg-gray-100 transition-colors">
+                Ver guias <ArrowUpRight size={14} />
+              </Link>
+              <button onClick={handleExportar} disabled={exportLoading} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-whatsapp/20 border border-brand-whatsapp/40 text-white text-xs font-black uppercase tracking-wider hover:bg-brand-whatsapp/30 transition-colors disabled:opacity-60">
+                Exportar rapido <Download size={14} />
+              </button>
+            </div>
+          </div>
+          <div className="p-6 bg-black/20 border-t lg:border-t-0 lg:border-l border-white/10">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs uppercase tracking-widest text-white/70 font-bold">Indice de servicio</p>
+              <ShieldCheck size={16} className="text-white/80" />
+            </div>
+            <p className="text-4xl font-title leading-none">{scoreCliente}</p>
+            <p className="text-xs mt-2 text-white/80">Basado en efectividad y novedades acumuladas.</p>
+            <div className="mt-4 pt-4 border-t border-white/15">
+              <div className="flex items-center gap-2 text-sm text-white/90">
+                <SearchCheck size={16} className="text-brand-whatsapp" />
+                <span>Guias activas: <strong>{kpis.total_activas ?? 0}</strong></span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">

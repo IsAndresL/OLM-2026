@@ -1,4 +1,5 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
 const { verificarToken, checkRole, checkAdminPermission } = require('../middlewares/auth');
 
@@ -115,13 +116,16 @@ router.get('/repartidores', verificarToken, checkRole(['admin']), checkAdminPerm
 
     const { data: usuarios, error: usersError } = await supabase
       .from('usuarios')
-      .select('id, nombre_completo')
+      .select('id, nombre_completo, avatar_url')
       .in('id', repartidorIds);
 
     if (usersError) return res.status(500).json({ error: usersError.message });
 
     const usersMap = (usuarios || []).reduce((acc, u) => {
-      acc[u.id] = u.nombre_completo;
+      acc[u.id] = {
+        nombre_completo: u.nombre_completo,
+        avatar_url: u.avatar_url || null,
+      };
       return acc;
     }, {});
 
@@ -144,7 +148,8 @@ router.get('/repartidores', verificarToken, checkRole(['admin']), checkAdminPerm
 
     const result = ubicaciones.map((u) => ({
       repartidor_id: u.repartidor_id,
-      nombre_completo: usersMap[u.repartidor_id] || 'Sin nombre',
+      nombre_completo: usersMap[u.repartidor_id]?.nombre_completo || 'Sin nombre',
+      avatar_url: usersMap[u.repartidor_id]?.avatar_url || null,
       lat: Number(u.lat),
       lng: Number(u.lng),
       precision_m: u.precision_m,
@@ -159,13 +164,25 @@ router.get('/repartidores', verificarToken, checkRole(['admin']), checkAdminPerm
   }
 });
 
-router.get('/repartidor/:id/ubicacion', async (req, res) => {
+router.get('/public/:token/ubicacion', async (req, res) => {
   try {
-    const { id } = req.params;
+    const { token } = req.params;
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (_err) {
+      return res.status(401).json({ error: 'Token de tracking inválido o expirado' });
+    }
+
+    if (!decoded || decoded.scope !== 'tracking_public' || !decoded.rid) {
+      return res.status(401).json({ error: 'Token de tracking inválido' });
+    }
+
     const { data, error } = await supabase
       .from('ubicaciones_repartidor')
       .select('lat, lng, activo')
-      .eq('repartidor_id', id)
+      .eq('repartidor_id', decoded.rid)
       .eq('activo', true)
       .maybeSingle();
 

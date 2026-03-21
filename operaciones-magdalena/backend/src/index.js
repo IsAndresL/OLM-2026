@@ -1,5 +1,6 @@
 const express = require('express');
 const cors    = require('cors');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
@@ -18,11 +19,41 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175'
-];
+].filter(Boolean);
+
+const isProd = process.env.NODE_ENV === 'production';
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos de login. Intenta de nuevo en unos minutos.' },
+});
+
+const trackingLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas consultas de tracking. Intenta nuevamente en un momento.' },
+});
+
+const gpsPublicLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas consultas de ubicación pública. Intenta nuevamente en un momento.' },
+});
 
 app.use(cors({ 
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin) {
+      if (isProd) return callback(new Error('Origin requerido'));
+      return callback(null, true);
+    }
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -30,6 +61,10 @@ app.use(cors({
   }, 
   credentials: true 
 }));
+
+app.use('/api/v1/auth/login', loginLimiter);
+app.use('/api/v1/tracking', trackingLimiter);
+app.use('/api/v1/gps/public', gpsPublicLimiter);
 
 
 // Import route modules
@@ -46,7 +81,6 @@ const codRoutes = require('./routes/cod');
 const liquidacionesRoutes = require('./routes/liquidaciones');
 const tarifasRoutes = require('./routes/tarifas');
 const gpsRoutes = require('./routes/gps');
-const rutasRoutes = require('./routes/rutas');
 const zonasRoutes = require('./routes/zonas');
 const devolucionesRoutes = require('./routes/devoluciones');
 
@@ -64,7 +98,6 @@ app.use('/api/v1/cod', codRoutes);
 app.use('/api/v1/liquidaciones', liquidacionesRoutes);
 app.use('/api/v1/tarifas', tarifasRoutes);
 app.use('/api/v1/gps', gpsRoutes);
-app.use('/api/v1/rutas', rutasRoutes);
 app.use('/api/v1/zonas', zonasRoutes);
 app.use('/api/v1/devoluciones', devolucionesRoutes);
 
@@ -72,7 +105,9 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 app.use((_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, _req, res, _next) => {
   console.error(err.stack);
-  res.status(err.status || 500).json({ error: err.message || 'Error interno' });
+  const status = err.status || 500;
+  if (status >= 500) return res.status(status).json({ error: 'Error interno del servidor' });
+  return res.status(status).json({ error: err.message || 'Solicitud inválida' });
 });
 
 const PORT = process.env.PORT || 4000;

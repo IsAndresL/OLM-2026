@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { codService, firmaService, gpsService, repartidorService, rutasService } from '../../services/api';
+import { codService, firmaService, gpsService, repartidorService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import LayoutMovil from '../../components/LayoutMovil';
 import BadgeEstado from '../../components/BadgeEstado';
@@ -8,13 +8,15 @@ import { formatCOP } from '../../utils/formato';
 import { 
   RefreshCw, Package, Truck, Phone, 
   ChevronRight, CheckCircle2, XCircle, 
-  MapPin, AlertCircle, Info, Camera
+  MapPin, AlertCircle, Info, Camera, CheckSquare, Square
 } from 'lucide-react';
 
 export default function RepartidorGuias() {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   
   const [guias, setGuias] = useState([]);
+  const [guiasEntregadasHoy, setGuiasEntregadasHoy] = useState([]);
+  const [tabActiva, setTabActiva] = useState('activas');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMSG, setErrorMSG] = useState(null);
@@ -29,26 +31,30 @@ export default function RepartidorGuias() {
   const [formError, setFormError] = useState('');
   const [nuevoEstado, setNuevoEstado] = useState('');
   const [nota, setNota] = useState('');
+  const [codObservaciones, setCodObservaciones] = useState('');
   const [foto, setFoto] = useState(null);
   const [fotoPreview, setFotoPreview] = useState('');
-  const [codFueCobrado, setCodFueCobrado] = useState(true);
-  const [codCobradoMonto, setCodCobradoMonto] = useState('');
   const [codMetodo, setCodMetodo] = useState('efectivo');
   const [nombreReceptor, setNombreReceptor] = useState('');
   const [cedulaReceptor, setCedulaReceptor] = useState('');
   const [firmaDataUrl, setFirmaDataUrl] = useState(null);
   const [firmaTieneTrazo, setFirmaTieneTrazo] = useState(false);
-  const [routeModalOpen, setRouteModalOpen] = useState(false);
-  const [rutaDia, setRutaDia] = useState(null);
-  const [routeLoading, setRouteLoading] = useState(false);
+  const [selectedAsignadas, setSelectedAsignadas] = useState([]);
+  const [bulkEnRutaLoading, setBulkEnRutaLoading] = useState(false);
+
+  const hoy = new Date().toISOString().slice(0, 10);
 
   const cargarGuias = async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     else setRefreshing(true);
     setErrorMSG(null);
     try {
-      const res = await repartidorService.misGuias(token);
-      setGuias(res);
+      const [resActivas, resEntregadasHoy] = await Promise.all([
+        repartidorService.misGuias(token),
+        repartidorService.misGuias(token, { estado: 'entregado', fecha: hoy }),
+      ]);
+      setGuias(resActivas || []);
+      setGuiasEntregadasHoy(resEntregadasHoy || []);
     } catch (err) {
       setErrorMSG(err.message);
     } finally {
@@ -62,6 +68,11 @@ export default function RepartidorGuias() {
     const interval = setInterval(() => cargarGuias(true), 120000); // refresh every 2 min
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const asignadasIds = new Set(guias.filter((g) => g.estado_actual === 'asignado').map((g) => g.id));
+    setSelectedAsignadas((prev) => prev.filter((id) => asignadasIds.has(id)));
+  }, [guias]);
 
   useEffect(() => {
     if (!token || !navigator.geolocation) return undefined;
@@ -120,9 +131,8 @@ export default function RepartidorGuias() {
     setFoto(null);
     setFotoPreview('');
     setFormError('');
-    setCodFueCobrado(true);
     setCodMetodo('efectivo');
-    setCodCobradoMonto(guia.es_cod && guia.monto_cod ? String(guia.monto_cod) : '');
+    setCodObservaciones('');
     setNombreReceptor('');
     setCedulaReceptor('');
     setFirmaDataUrl(null);
@@ -142,38 +152,60 @@ export default function RepartidorGuias() {
     return new Blob([bytes], { type: mime });
   };
 
-  const abrirRutaDelDia = async () => {
-    if (!user?.id) return;
-    setRouteLoading(true);
-    setFormError('');
-    try {
-      const fecha = new Date().toISOString().slice(0, 10);
-      const data = await rutasService.obtener(token, user.id, fecha);
-      setRutaDia(data);
-      setRouteModalOpen(true);
-    } catch (err) {
-      setFormError(err.message || 'No se pudo cargar tu ruta del día');
-    } finally {
-      setRouteLoading(false);
-    }
-  };
-
-  const buildGoogleMapsDirLink = () => {
-    const orden = rutaDia?.orden || [];
-    const points = orden.filter((g) => g.lat != null && g.lng != null);
-    if (points.length < 2) return null;
-
-    const origin = `${points[0].lat},${points[0].lng}`;
-    const destination = `${points[points.length - 1].lat},${points[points.length - 1].lng}`;
-    const middle = points.slice(1, -1).map((p) => `${p.lat},${p.lng}`).join('|');
-    return `https://maps.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}${middle ? `&waypoints=${encodeURIComponent(middle)}` : ''}`;
-  };
-
   const handleFoto = (e) => {
     const file = e.target.files[0];
     if (file) {
       setFoto(file);
       setFotoPreview(URL.createObjectURL(file));
+    }
+  };
+
+  const guiasAsignadas = guias.filter((g) => g.estado_actual === 'asignado');
+  const guiasVisibles = tabActiva === 'entregadas' ? guiasEntregadasHoy : guias;
+
+  const formatearHoraEntrega = (fechaIso) => {
+    if (!fechaIso) return 'Hora no disponible';
+    const fecha = new Date(fechaIso);
+    if (Number.isNaN(fecha.getTime())) return 'Hora no disponible';
+    return fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const toggleSelectAsignada = (guiaId) => {
+    setSelectedAsignadas((prev) => (
+      prev.includes(guiaId)
+        ? prev.filter((id) => id !== guiaId)
+        : [...prev, guiaId]
+    ));
+  };
+
+  const toggleSelectAllAsignadas = () => {
+    if (guiasAsignadas.length === 0) return;
+    if (selectedAsignadas.length === guiasAsignadas.length) {
+      setSelectedAsignadas([]);
+      return;
+    }
+    setSelectedAsignadas(guiasAsignadas.map((g) => g.id));
+  };
+
+  const iniciarRutaMasiva = async () => {
+    if (selectedAsignadas.length === 0) return;
+    setBulkEnRutaLoading(true);
+    setFormError('');
+    try {
+      const settled = await Promise.allSettled(
+        selectedAsignadas.map((id) => repartidorService.cambiarEstado(token, id, { estado: 'en_ruta', nota: '' }))
+      );
+      const ok = settled.filter((r) => r.status === 'fulfilled').length;
+      const fail = settled.length - ok;
+      if (fail > 0) {
+        setFormError(`Se iniciaron ${ok} guía(s) y ${fail} no se pudieron actualizar.`);
+      }
+      setSelectedAsignadas([]);
+      await cargarGuias(true);
+    } catch (err) {
+      setFormError(err.message || 'No se pudieron iniciar las guías seleccionadas');
+    } finally {
+      setBulkEnRutaLoading(false);
     }
   };
 
@@ -191,9 +223,9 @@ export default function RepartidorGuias() {
       return;
     }
 
-    if (nuevoEstado === 'entregado' && guiaActual.es_cod && codFueCobrado) {
-      if (!codCobradoMonto || Number(codCobradoMonto) <= 0) {
-        setFormError('Debes indicar el monto cobrado para registrar la contraentrega');
+    if (nuevoEstado === 'entregado' && guiaActual.es_cod) {
+      if (!guiaActual.monto_cod || Number(guiaActual.monto_cod) <= 0) {
+        setFormError('La guía COD no tiene un monto válido configurado');
         return;
       }
       if (!codMetodo) {
@@ -217,18 +249,24 @@ export default function RepartidorGuias() {
         firma_url = uploaded?.firma_url || null;
       }
 
+      const notaBase = nota.trim();
+      const observacionPago = codObservaciones.trim();
+      const notaFinal = (nuevoEstado === 'entregado' && guiaActual.es_cod && observacionPago)
+        ? `${notaBase}${notaBase ? ' | ' : ''}Obs pago COD: ${observacionPago}`
+        : notaBase;
+
       await repartidorService.cambiarEstado(token, guiaActual.id, {
         estado: nuevoEstado,
-        nota: nota.trim(),
+        nota: notaFinal,
         foto_evidencia_url,
         firma_url,
         nombre_receptor: nombreReceptor.trim() || null,
         cedula_receptor: cedulaReceptor.trim() || null,
       });
 
-      if (nuevoEstado === 'entregado' && guiaActual.es_cod && codFueCobrado) {
+      if (nuevoEstado === 'entregado' && guiaActual.es_cod) {
         await codService.registrarCobro(token, guiaActual.id, {
-          cod_cobrado: Number(codCobradoMonto),
+          cod_cobrado: Number(guiaActual.monto_cod),
           cod_metodo: codMetodo,
         });
       }
@@ -273,47 +311,99 @@ export default function RepartidorGuias() {
         </div>
       </div>
 
-      <div className="mb-4">
+      <div className="mb-4 bg-white rounded-2xl border border-gray-100 p-1 grid grid-cols-2 gap-1 shadow-sm">
         <button
-          onClick={abrirRutaDelDia}
-          disabled={routeLoading}
-          className="w-full min-h-[48px] rounded-2xl bg-brand-primary text-white text-xs font-black uppercase tracking-widest disabled:opacity-60"
+          onClick={() => setTabActiva('activas')}
+          className={`h-10 rounded-xl text-xs font-black uppercase tracking-widest transition-colors ${tabActiva === 'activas' ? 'bg-brand-navy text-white' : 'text-gray-600'}`}
         >
-          {routeLoading ? 'Cargando ruta...' : 'Ver mi ruta'}
+          Activas ({guias.length})
+        </button>
+        <button
+          onClick={() => setTabActiva('entregadas')}
+          className={`h-10 rounded-xl text-xs font-black uppercase tracking-widest transition-colors ${tabActiva === 'entregadas' ? 'bg-emerald-600 text-white' : 'text-gray-600'}`}
+        >
+          Entregadas hoy ({guiasEntregadasHoy.length})
         </button>
       </div>
+
+      {tabActiva === 'activas' && guiasAsignadas.length > 0 && (
+        <div className="mb-4 bg-white border border-blue-100 rounded-2xl p-3 shadow-sm">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <p className="text-xs font-black uppercase tracking-widest text-blue-700">Inicio masivo de ruta</p>
+            <button
+              onClick={toggleSelectAllAsignadas}
+              className="text-xs font-bold text-blue-700 inline-flex items-center gap-1"
+            >
+              {selectedAsignadas.length === guiasAsignadas.length && guiasAsignadas.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
+              {selectedAsignadas.length === guiasAsignadas.length && guiasAsignadas.length > 0 ? 'Quitar todas' : 'Seleccionar todas'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-600 mb-3">Seleccionadas: <strong>{selectedAsignadas.length}</strong> de {guiasAsignadas.length} asignadas.</p>
+          <button
+            onClick={iniciarRutaMasiva}
+            disabled={bulkEnRutaLoading || selectedAsignadas.length === 0}
+            className="w-full min-h-[46px] rounded-xl bg-orange-500 text-white text-xs font-black uppercase tracking-widest disabled:opacity-60"
+          >
+            {bulkEnRutaLoading ? 'Iniciando ruta...' : `Iniciar ruta (${selectedAsignadas.length})`}
+          </button>
+        </div>
+      )}
 
       {/* Lista */}
       <div className="space-y-4 pb-24">
         {loading && !refreshing && <div className="text-center p-8 text-gray-400 text-sm">Cargando guías...</div>}
         {errorMSG && <div className="text-center p-4 text-red-500 text-sm bg-red-50 rounded-lg">{errorMSG}</div>}
         
-        {!loading && guias.length === 0 && (
+        {!loading && guiasVisibles.length === 0 && (
           <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-gray-200">
             <div className="w-16 h-16 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle2 className="text-green-500" size={32} />
             </div>
-            <h3 className="text-gray-800 font-title text-lg mb-1">¡Misión Cumplida!</h3>
-            <p className="text-gray-500 text-sm px-6">Has completado todas tus entregas asignadas por hoy.</p>
+            <h3 className="text-gray-800 font-title text-lg mb-1">{tabActiva === 'entregadas' ? 'Sin entregas hoy' : '¡Misión Cumplida!'}</h3>
+            <p className="text-gray-500 text-sm px-6">{tabActiva === 'entregadas' ? 'Aún no tienes guías marcadas como entregadas en la fecha de hoy.' : 'Has completado todas tus entregas asignadas por hoy.'}</p>
           </div>
         )}
 
-        {guias.map(g => (
+        {guiasVisibles.map(g => (
           <div key={g.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden relative group">
             <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${
               g.estado_actual === 'en_ruta' ? 'bg-orange-400' :
               g.estado_actual === 'asignado' ? 'bg-blue-400' : 
               g.estado_actual === 'no_contesto' ? 'bg-red-400' : 'bg-gray-300'
             }`}></div>
+
+            {tabActiva === 'entregadas' && (
+              <div className="mx-4 mt-4 ml-6 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                <p className="text-[10px] uppercase tracking-widest font-black text-emerald-700">Hora de entrega</p>
+                <p className="text-2xl font-title text-emerald-800 leading-none mt-1">{formatearHoraEntrega(g.ultimo_estado?.created_at)}</p>
+              </div>
+            )}
             
             <div className="p-4 pl-6">
               <div className="flex justify-between items-center mb-3">
                 <div className="flex items-center gap-1.5">
+                  {g.estado_actual === 'asignado' && (
+                    <button
+                      onClick={() => toggleSelectAsignada(g.id)}
+                      className={`h-7 w-7 rounded-md border inline-flex items-center justify-center transition-colors ${selectedAsignadas.includes(g.id) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50'}`}
+                      aria-label={selectedAsignadas.includes(g.id) ? 'Quitar de seleccion' : 'Seleccionar guia'}
+                    >
+                      {selectedAsignadas.includes(g.id) ? <CheckSquare size={14} /> : <Square size={14} />}
+                    </button>
+                  )}
                   <Package size={14} className="text-gray-400" />
                   <span className="text-[11px] font-bold text-gray-400 tracking-wider uppercase">{g.numero_guia}</span>
                 </div>
                 <BadgeEstado estado={g.estado_actual} />
               </div>
+
+              {g.es_cod && (
+                <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-2.5">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-emerald-700">Contraentrega</p>
+                  <p className="text-lg font-title text-emerald-900 leading-none mt-1">{formatCOP(g.cod_cobrado || g.monto_cod || 0)}</p>
+                  <p className="text-[11px] text-emerald-700 mt-1">{g.cod_estado === 'cobrado' ? 'Cobrada' : 'Pendiente por cobrar'}</p>
+                </div>
+              )}
               
               <div className="mb-4">
                 <h3 className="text-lg font-title text-gray-900 leading-tight mb-2">{g.nombre_destinatario}</h3>
@@ -337,9 +427,15 @@ export default function RepartidorGuias() {
                 </button>
               </div>
               
-              <button onClick={() => openEstado(g)} className="w-full h-12 flex items-center justify-center bg-brand-navy text-white rounded-xl text-sm font-bold shadow-lg shadow-brand-navy/20 active:scale-[0.98] transition-all gap-2">
-                Gestionar Entrega <ChevronRight size={18} />
-              </button>
+              {tabActiva === 'activas' ? (
+                <button onClick={() => openEstado(g)} className="w-full h-12 flex items-center justify-center bg-brand-navy text-white rounded-xl text-sm font-bold shadow-lg shadow-brand-navy/20 active:scale-[0.98] transition-all gap-2">
+                  Gestionar Entrega <ChevronRight size={18} />
+                </button>
+              ) : (
+                <div className="w-full h-12 flex items-center justify-center bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold border border-emerald-100">
+                  Entregada hoy
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -393,6 +489,17 @@ export default function RepartidorGuias() {
                      {guiaActual.peso_kg && <p className="text-sm text-gray-600 mt-1">Peso: {guiaActual.peso_kg} kg</p>}
                   </div>
 
+                  {guiaActual.es_cod && (
+                    <div className="pt-4 border-t border-gray-100">
+                      <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Contraentrega</h4>
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                        <p className="text-xs font-black uppercase tracking-widest text-emerald-700">Monto a cobrar</p>
+                        <p className="text-2xl font-title text-emerald-900 mt-1">{formatCOP(guiaActual.cod_cobrado || guiaActual.monto_cod || 0)}</p>
+                        <p className="text-xs text-emerald-700 mt-1">Estado COD: {guiaActual.cod_estado || 'pendiente'}</p>
+                      </div>
+                    </div>
+                  )}
+
                   {guiaActual.ultimo_estado && (
                     <div className="pt-4 border-t border-gray-100">
                        <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Último evento</h4>
@@ -400,6 +507,44 @@ export default function RepartidorGuias() {
                          <BadgeEstado estado={guiaActual.ultimo_estado.estado} />
                          <p className="text-xs text-gray-500 mt-2">{new Date(guiaActual.ultimo_estado.created_at).toLocaleString('es-CO')}</p>
                          {guiaActual.ultimo_estado.nota && <p className="text-sm text-gray-700 font-medium italic mt-1">"{guiaActual.ultimo_estado.nota}"</p>}
+
+                         {(guiaActual.ultimo_estado.nombre_receptor || guiaActual.ultimo_estado.cedula_receptor) && (
+                           <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-2.5">
+                             <p className="text-[10px] uppercase tracking-widest font-black text-blue-700">Datos del receptor</p>
+                             {guiaActual.ultimo_estado.nombre_receptor && (
+                               <p className="text-sm text-gray-700 mt-1"><strong>Nombre:</strong> {guiaActual.ultimo_estado.nombre_receptor}</p>
+                             )}
+                             {guiaActual.ultimo_estado.cedula_receptor && (
+                               <p className="text-sm text-gray-700"><strong>Cédula:</strong> {guiaActual.ultimo_estado.cedula_receptor}</p>
+                             )}
+                           </div>
+                         )}
+
+                         {guiaActual.ultimo_estado.foto_evidencia_url && (
+                           <div className="mt-3">
+                             <p className="text-[10px] uppercase tracking-widest font-black text-gray-500 mb-1">Foto de evidencia</p>
+                             <a href={guiaActual.ultimo_estado.foto_evidencia_url} target="_blank" rel="noreferrer">
+                               <img
+                                 src={guiaActual.ultimo_estado.foto_evidencia_url}
+                                 alt="Evidencia de entrega"
+                                 className="w-full rounded-xl border border-gray-200 object-cover max-h-52"
+                               />
+                             </a>
+                           </div>
+                         )}
+
+                         {guiaActual.ultimo_estado.firma_url && (
+                           <div className="mt-3">
+                             <p className="text-[10px] uppercase tracking-widest font-black text-gray-500 mb-1">Firma del receptor</p>
+                             <a href={guiaActual.ultimo_estado.firma_url} target="_blank" rel="noreferrer">
+                               <img
+                                 src={guiaActual.ultimo_estado.firma_url}
+                                 alt="Firma del receptor"
+                                 className="w-full rounded-xl border border-gray-200 bg-white object-contain max-h-44"
+                               />
+                             </a>
+                           </div>
+                         )}
                        </div>
                     </div>
                   )}
@@ -537,58 +682,34 @@ export default function RepartidorGuias() {
                     <div className="space-y-3 border border-emerald-100 bg-emerald-50 rounded-2xl p-4">
                       <div>
                         <p className="text-sm font-bold text-emerald-800">Esta guia requiere cobro contraentrega</p>
-                        <p className="text-xs text-emerald-700">Monto a cobrar: {formatCOP(guiaActual.monto_cod)}</p>
+                        <p className="text-xs text-emerald-700 uppercase tracking-widest mt-2">Monto a cobrar</p>
+                        <p className="text-3xl font-title text-emerald-900 leading-none mt-1">{formatCOP(guiaActual.monto_cod)}</p>
                       </div>
 
-                      <div className="grid grid-cols-1 gap-2">
-                        <label className={`flex items-center p-3 border rounded-xl cursor-pointer ${codFueCobrado ? 'border-emerald-300 bg-white' : 'border-emerald-100 bg-emerald-50'}`}>
-                          <input
-                            type="radio"
-                            checked={codFueCobrado}
-                            onChange={() => setCodFueCobrado(true)}
-                            className="mr-2"
-                          />
-                          <span className="text-sm font-semibold text-emerald-900">Si, cobre contraentrega</span>
-                        </label>
-                        <label className={`flex items-center p-3 border rounded-xl cursor-pointer ${!codFueCobrado ? 'border-amber-300 bg-white' : 'border-emerald-100 bg-emerald-50'}`}>
-                          <input
-                            type="radio"
-                            checked={!codFueCobrado}
-                            onChange={() => setCodFueCobrado(false)}
-                            className="mr-2"
-                          />
-                          <span className="text-sm font-semibold text-amber-800">No se pudo cobrar</span>
-                        </label>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Metodo de pago</label>
+                        <select
+                          value={codMetodo}
+                          onChange={(e) => setCodMetodo(e.target.value)}
+                          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white"
+                        >
+                          <option value="efectivo">Efectivo</option>
+                          <option value="nequi">Nequi</option>
+                          <option value="daviplata">Daviplata</option>
+                          <option value="transferencia">Transferencia</option>
+                        </select>
                       </div>
 
-                      {codFueCobrado && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-xs font-bold text-gray-700 mb-1">Monto cobrado</label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={codCobradoMonto}
-                              onChange={(e) => setCodCobradoMonto(e.target.value)}
-                              className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-gray-700 mb-1">Metodo de pago</label>
-                            <select
-                              value={codMetodo}
-                              onChange={(e) => setCodMetodo(e.target.value)}
-                              className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white"
-                            >
-                              <option value="efectivo">Efectivo</option>
-                              <option value="nequi">Nequi</option>
-                              <option value="daviplata">Daviplata</option>
-                              <option value="transferencia">Transferencia</option>
-                            </select>
-                          </div>
-                        </div>
-                      )}
+                      <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Observaciones del pago (opcional)</label>
+                        <textarea
+                          value={codObservaciones}
+                          onChange={(e) => setCodObservaciones(e.target.value)}
+                          rows={2}
+                          placeholder="Ej: pagó mitad en efectivo y mitad por Nequi"
+                          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none"
+                        />
+                      </div>
                     </div>
                   )}
 
@@ -604,51 +725,6 @@ export default function RepartidorGuias() {
         </div>
       )}
 
-      {routeModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="font-title text-lg text-gray-900">Mi ruta del día</h3>
-              <button onClick={() => setRouteModalOpen(false)} className="text-sm text-gray-500">Cerrar</button>
-            </div>
-
-            <div className="p-5 space-y-3">
-              {!rutaDia || !(rutaDia.orden || []).length ? (
-                <p className="text-sm text-gray-500">No tienes una ruta optimizada para hoy.</p>
-              ) : (
-                <>
-                  <div className="rounded-xl border border-gray-100 p-3 bg-gray-50 text-xs text-gray-600 flex flex-wrap gap-3">
-                    <span>Paradas: <strong>{rutaDia.orden.length}</strong></span>
-                    <span>Distancia: <strong>{rutaDia.distancia_km ?? 'N/D'} km</strong></span>
-                    <span>Tiempo: <strong>{rutaDia.tiempo_min ?? 'N/D'} min</strong></span>
-                  </div>
-
-                  <div className="space-y-2 max-h-80 overflow-y-auto">
-                    {rutaDia.orden.map((g, idx) => (
-                      <div key={g.id || `${g.numero_guia}-${idx}`} className="rounded-xl border border-gray-100 p-3">
-                        <p className="text-xs font-black uppercase tracking-widest text-gray-500">{idx + 1}. {g.numero_guia}</p>
-                        <p className="text-sm font-semibold text-gray-800">{g.nombre_destinatario}</p>
-                        <p className="text-xs text-gray-500">{g.direccion_destinatario}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {buildGoogleMapsDirLink() && (
-                    <a
-                      href={buildGoogleMapsDirLink()}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block text-center px-4 py-3 rounded-xl bg-gray-900 text-white text-sm font-bold"
-                    >
-                      Abrir ruta en Google Maps
-                    </a>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </LayoutMovil>
   );
 }

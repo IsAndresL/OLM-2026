@@ -47,36 +47,20 @@ export default function TrackingPage() {
   };
 
   useEffect(() => {
-    if (!data || data.estado_actual !== 'en_ruta' || !data.repartidor_id) return undefined;
+    if (!data || data.estado_actual !== 'en_ruta' || !data.tracking_token) return undefined;
 
     let cancelled = false;
 
-    const cargarDestino = async () => {
-      const q = `${data.direccion_destinatario || ''}, ${data.ciudad_destino || 'Santa Marta'}, Colombia`;
-      if (!q.trim()) return;
-      try {
-        const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`, {
-          headers: { 'Accept-Language': 'es' },
-        });
-        const rows = await resp.json();
-        if (!cancelled && rows?.[0]) {
-          setDestinoPos({ lat: Number(rows[0].lat), lng: Number(rows[0].lon) });
-        }
-      } catch (_err) {
-        // No bloquea tracking si falla geocoding.
-      }
-    };
-
     const cargarGPS = async () => {
       try {
-        const pos = await gpsService.ubicacionPublica(data.repartidor_id);
+        const pos = await gpsService.ubicacionPublica(data.tracking_token);
         if (!cancelled && pos?.lat && pos?.lng) setRepartidorPos({ lat: Number(pos.lat), lng: Number(pos.lng) });
       } catch (_err) {
         if (!cancelled) setRepartidorPos(null);
       }
     };
 
-    cargarDestino();
+    setDestinoPos(null);
     cargarGPS();
     const interval = setInterval(cargarGPS, 30000);
 
@@ -84,7 +68,7 @@ export default function TrackingPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [data?.repartidor_id, data?.estado_actual, data?.direccion_destinatario, data?.ciudad_destino]);
+  }, [data?.tracking_token, data?.estado_actual]);
 
   const getEmoji = (estado) => {
     const emojis = {
@@ -154,8 +138,7 @@ export default function TrackingPage() {
                   <div className="text-xl font-mono font-bold text-gray-900">{data.numero_guia}</div>
                 </div>
                 <div className="md:text-right">
-                  <p className="text-sm font-semibold text-gray-800">Para: {data.nombre_destinatario}</p>
-                  <p className="text-sm text-gray-600">Destino: {data.ciudad_destino}</p>
+                  <p className="text-sm font-semibold text-gray-800">Destino: {data.ciudad_destino}</p>
                 </div>
               </div>
             </div>
@@ -196,13 +179,12 @@ export default function TrackingPage() {
                 ))}
               </div>
 
-              {data.estado_actual === 'en_ruta' && repartidorPos && destinoPos && (
+              {data.estado_actual === 'en_ruta' && repartidorPos && (
                 <div className="mt-8">
                   <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Seguimiento en vivo</h4>
-                  <p className="text-sm text-gray-600 mb-3">El repartidor está en camino hacia tu dirección.</p>
+                  <p className="text-sm text-gray-600 mb-3">El repartidor está en camino.</p>
                   <MapaBase center={[repartidorPos.lat, repartidorPos.lng]} zoom={13} height="320px" scrollWheelZoom>
                     <Marker position={[repartidorPos.lat, repartidorPos.lng]} />
-                    <Marker position={[destinoPos.lat, destinoPos.lng]} />
                   </MapaBase>
                 </div>
               )}

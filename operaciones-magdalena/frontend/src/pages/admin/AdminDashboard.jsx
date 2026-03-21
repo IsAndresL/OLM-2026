@@ -14,10 +14,10 @@ import {
   PackageSearch,
   ChevronLeft,
   ChevronRight,
-  Filter,
   X,
   Users as UsersIcon,
-  Building2
+  Building2,
+  SlidersHorizontal
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -69,11 +69,11 @@ function KPICard({ titulo, valor, subtitulo, alerta, esTasa, icon: IconComponent
   );
 }
 
-
 export default function AdminDashboard() {
   const { token, hasPermission } = useAuth();
   const { alerta, mostrarAlerta, cerrarAlerta } = useAlerta();
   const canExportar = hasPermission('reportes.export');
+  const hoyIso = new Date().toLocaleDateString('en-CA');
   
   // Data states
   const [resumen, setResumen] = useState(null);
@@ -83,7 +83,12 @@ export default function AdminDashboard() {
   const [loadingResumen, setLoadingResumen] = useState(true);
   const [loadingTendencia, setLoadingTendencia] = useState(true);
   const [diasTendencia, setDiasTendencia] = useState(30);
-  const [fechaFiltro, setFechaFiltro] = useState(new Date().toLocaleDateString('en-CA'));
+  const [fechaFiltro, setFechaFiltro] = useState(hoyIso);
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState('');
+  const [filtroRepartidorId, setFiltroRepartidorId] = useState('');
+  const [modoRango, setModoRango] = useState('rapido');
+  const [fechaDesde, setFechaDesde] = useState(hoyIso);
+  const [fechaHasta, setFechaHasta] = useState(hoyIso);
   
   // Export states
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -94,16 +99,20 @@ export default function AdminDashboard() {
     // Refresh every 5 minutes
     const interval = setInterval(cargarResumen, 300000);
     return () => clearInterval(interval);
-  }, [fechaFiltro]);
+  }, [fechaFiltro, filtroEmpresaId, filtroRepartidorId]);
 
   useEffect(() => {
     cargarTendencia();
-  }, [diasTendencia]);
+  }, [diasTendencia, modoRango, fechaDesde, fechaHasta, filtroEmpresaId, filtroRepartidorId]);
 
   const cargarResumen = async () => {
     try {
       setLoadingResumen(true);
-      const data = await dashboardService.resumen(token, fechaFiltro);
+      const data = await dashboardService.resumen(token, {
+        fecha: fechaFiltro,
+        empresaId: filtroEmpresaId || undefined,
+        repartidorId: filtroRepartidorId || undefined,
+      });
       setResumen(data);
     } catch (err) {
       mostrarAlerta('error', err.message);
@@ -114,8 +123,25 @@ export default function AdminDashboard() {
 
   const cargarTendencia = async () => {
     try {
+      if (modoRango === 'custom' && fechaDesde > fechaHasta) {
+        mostrarAlerta('error', 'La fecha desde no puede ser mayor que la fecha hasta');
+        return;
+      }
+
       setLoadingTendencia(true);
-      const data = await dashboardService.tendencia(token, diasTendencia);
+      const params = {
+        empresaId: filtroEmpresaId || undefined,
+        repartidorId: filtroRepartidorId || undefined,
+      };
+
+      if (modoRango === 'custom') {
+        params.fechaDesde = fechaDesde;
+        params.fechaHasta = fechaHasta;
+      } else {
+        params.dias = diasTendencia;
+      }
+
+      const data = await dashboardService.tendencia(token, params);
       // Format dates for tooltip/xaxis: YYYY-MM-DD to DD/MM
       const formatted = data.map(item => ({
         ...item,
@@ -166,7 +192,100 @@ export default function AdminDashboard() {
     }
   };
 
+  const obtenerRangoActual = () => {
+    if (modoRango === 'custom') {
+      return { fecha_desde: fechaDesde, fecha_hasta: fechaHasta };
+    }
+
+    const hasta = new Date();
+    hasta.setHours(23, 59, 59, 999);
+    const desde = new Date(hasta);
+    desde.setDate(hasta.getDate() - diasTendencia + 1);
+    desde.setHours(0, 0, 0, 0);
+
+    return {
+      fecha_desde: desde.toLocaleDateString('en-CA'),
+      fecha_hasta: hasta.toLocaleDateString('en-CA'),
+    };
+  };
+
+  const exportarExcelFiltrado = async () => {
+    if (!canExportar) {
+      mostrarAlerta('error', 'No tienes permiso para exportar reportes');
+      return;
+    }
+
+    try {
+      setExportLoading(true);
+      const rango = obtenerRangoActual();
+      const params = {
+        ...rango,
+        ...(filtroEmpresaId && { empresa_id: filtroEmpresaId }),
+        ...(filtroRepartidorId && { repartidor_id: filtroRepartidorId }),
+      };
+
+      const blob = await reportesService.exportar(token, params);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Tendencia-Filtrada-${new Date().toISOString().substring(0,10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      mostrarAlerta('success', 'Excel filtrado descargado');
+    } catch (err) {
+      mostrarAlerta('error', err.message);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const exportarTablaCsv = () => {
+    if (!tendencia.length) {
+      mostrarAlerta('error', 'No hay datos en la tabla para exportar');
+      return;
+    }
+
+    const escapar = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const encabezados = ['Fecha', 'Registradas', 'Entregadas', 'Novedades', 'Devueltas'];
+    const filas = tendencia.map((item) => [
+      item.fecha,
+      item.registradas,
+      item.entregadas,
+      item.novedades,
+      item.devueltas,
+    ]);
+
+    const contenido = [encabezados, ...filas]
+      .map((fila) => fila.map(escapar).join(';'))
+      .join('\n');
+
+    const blob = new Blob([contenido], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Tabla-Tendencia-${new Date().toISOString().substring(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    mostrarAlerta('success', 'Tabla descargada correctamente');
+  };
+
+  const limpiarFiltrosAnaliticos = () => {
+    setFiltroEmpresaId('');
+    setFiltroRepartidorId('');
+    setModoRango('rapido');
+    setDiasTendencia(30);
+    setFechaDesde(hoyIso);
+    setFechaHasta(hoyIso);
+  };
+
   const kpis = resumen?.kpis || {};
+  const alertasActivas = resumen?.alertas?.length || 0;
+  const empresaSeleccionada = resumen?.por_empresa?.find((e) => String(e.empresa_id) === String(filtroEmpresaId));
+  const repartidorSeleccionado = resumen?.por_repartidor?.find((r) => String(r.repartidor_id) === String(filtroRepartidorId));
 
   return (
     <Layout rol="admin">
@@ -208,6 +327,63 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      <div className="mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <SlidersHorizontal size={18} className="text-brand-primary" />
+          <h3 className="font-title text-gray-900 text-lg">Filtros Analiticos</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-xs uppercase tracking-wider font-bold text-gray-500 mb-1">Empresa</label>
+            <select value={filtroEmpresaId} onChange={(e) => setFiltroEmpresaId(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm">
+              <option value="">Todas las empresas</option>
+              {resumen?.por_empresa?.map((e) => (
+                <option key={e.empresa_id} value={e.empresa_id}>{e.nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-wider font-bold text-gray-500 mb-1">Repartidor</label>
+            <select value={filtroRepartidorId} onChange={(e) => setFiltroRepartidorId(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm">
+              <option value="">Todos los repartidores</option>
+              {resumen?.por_repartidor?.map((r) => (
+                <option key={r.repartidor_id} value={r.repartidor_id}>{r.nombre_completo}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs uppercase tracking-wider font-bold text-gray-500 mb-1">Modo de rango</label>
+            <select value={modoRango} onChange={(e) => setModoRango(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm">
+              <option value="rapido">Rapido (1d, 7d, 30d, 90d)</option>
+              <option value="custom">Personalizado (desde / hasta)</option>
+            </select>
+          </div>
+          <div className="flex items-end">
+            <button onClick={limpiarFiltrosAnaliticos} className="w-full border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl px-3 py-2 text-sm font-semibold transition-colors">
+              Limpiar filtros
+            </button>
+          </div>
+        </div>
+
+        {modoRango === 'custom' && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+            <div>
+              <label className="block text-xs uppercase tracking-wider font-bold text-gray-500 mb-1">Desde</label>
+              <input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider font-bold text-gray-500 mb-1">Hasta</label>
+              <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm" />
+            </div>
+            <div className="flex items-end">
+              <button onClick={cargarTendencia} className="w-full bg-brand-primary hover:bg-brand-dark text-white rounded-xl px-3 py-2 text-sm font-bold transition-colors">
+                Aplicar rango
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* KPIS */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-5 mb-10">
         {loadingResumen ? (
@@ -224,26 +400,102 @@ export default function AdminDashboard() {
         )}
       </div>
 
+      {/* PRIORIDADES */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <div className="rounded-2xl border border-red-200 bg-red-50/70 p-4">
+          <p className="text-[11px] uppercase font-black tracking-widest text-red-500 mb-1">Critico</p>
+          <p className="text-sm font-subtitle text-red-900">Guias estancadas</p>
+          <p className="text-2xl font-title text-red-700 mt-2">{alertasActivas}</p>
+        </div>
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+          <p className="text-[11px] uppercase font-black tracking-widest text-amber-600 mb-1">Monitoreo</p>
+          <p className="text-sm font-subtitle text-amber-900">Novedades del dia</p>
+          <p className="text-2xl font-title text-amber-700 mt-2">{kpis.total_novedades ?? 0}</p>
+        </div>
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+          <p className="text-[11px] uppercase font-black tracking-widest text-emerald-600 mb-1">Fortaleza</p>
+          <p className="text-sm font-subtitle text-emerald-900">Entregas efectivas</p>
+          <p className="text-2xl font-title text-emerald-700 mt-2">{kpis.tasa_efectividad ?? '0%'}</p>
+        </div>
+      </div>
+
+      {(empresaSeleccionada || repartidorSeleccionado) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+          {empresaSeleccionada && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5">
+              <p className="text-[11px] uppercase tracking-widest font-black text-emerald-600">Estadistica individual</p>
+              <h4 className="font-title text-emerald-900 text-xl mt-1">Empresa: {empresaSeleccionada.nombre}</h4>
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                <div className="bg-white/70 rounded-xl p-3 border border-emerald-100">
+                  <p className="text-xs text-gray-500 uppercase font-bold">En transito</p>
+                  <p className="text-2xl font-title text-emerald-700">{empresaSeleccionada.activas}</p>
+                </div>
+                <div className="bg-white/70 rounded-xl p-3 border border-emerald-100">
+                  <p className="text-xs text-gray-500 uppercase font-bold">Entregadas hoy</p>
+                  <p className="text-2xl font-title text-emerald-700">{empresaSeleccionada.entregadas_hoy}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {repartidorSeleccionado && (
+            <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-5">
+              <p className="text-[11px] uppercase tracking-widest font-black text-blue-600">Estadistica individual</p>
+              <h4 className="font-title text-blue-900 text-xl mt-1">Repartidor: {repartidorSeleccionado.nombre_completo}</h4>
+              <div className="mt-3 grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                <div className="bg-white/80 rounded-xl p-3 border border-blue-100">
+                  <p className="text-xs text-gray-500 uppercase font-bold">Asig.</p>
+                  <p className="text-xl font-title text-blue-700">{repartidorSeleccionado.asignadas}</p>
+                </div>
+                <div className="bg-white/80 rounded-xl p-3 border border-blue-100">
+                  <p className="text-xs text-gray-500 uppercase font-bold">Ent.</p>
+                  <p className="text-xl font-title text-blue-700">{repartidorSeleccionado.entregadas}</p>
+                </div>
+                <div className="bg-white/80 rounded-xl p-3 border border-blue-100">
+                  <p className="text-xs text-gray-500 uppercase font-bold">Nov.</p>
+                  <p className="text-xl font-title text-blue-700">{repartidorSeleccionado.novedades}</p>
+                </div>
+                <div className="bg-white/80 rounded-xl p-3 border border-blue-100">
+                  <p className="text-xs text-gray-500 uppercase font-bold">Efect.</p>
+                  <p className="text-xl font-title text-blue-700">{repartidorSeleccionado.tasa}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
 
       {/* TENDENCIA Y REP. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         
         {/* CHART */}
         <div className="lg:col-span-2 bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <h3 className="font-title text-gray-800 text-lg">Tendencia Temporal</h3>
-            <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-              {[7, 30, 90].map(d => (
-                <button 
-                  key={d} 
-                  onClick={() => setDiasTendencia(d)}
-                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${diasTendencia === d ? 'bg-white text-brand-dark shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  {d}d
-                </button>
-              ))}
+            <div className="flex flex-wrap gap-2 items-center">
+              {modoRango === 'rapido' && (
+                <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+                  {[1, 7, 30, 90].map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setDiasTendencia(d)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${diasTendencia === d ? 'bg-white text-brand-dark shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                      {d}d
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button onClick={exportarTablaCsv} className="px-3 py-2 text-xs font-bold rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700">
+                Descargar tabla
+              </button>
+              <button disabled={!canExportar || exportLoading} onClick={exportarExcelFiltrado} className="px-3 py-2 text-xs font-bold rounded-lg bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
+                {exportLoading ? 'Generando...' : 'Excel filtrado'}
+              </button>
             </div>
           </div>
+
           <div className="h-72 w-full">
             {loadingTendencia ? <SkeletonCard height="h-full" /> : (
               <ResponsiveContainer width="100%" height="100%">
@@ -260,6 +512,33 @@ export default function AdminDashboard() {
                 </BarChart>
               </ResponsiveContainer>
             )}
+          </div>
+
+          <div className="mt-4 border border-gray-100 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto max-h-56">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider font-bold">
+                  <tr>
+                    <th className="p-3">Fecha</th>
+                    <th className="p-3 text-right">Registradas</th>
+                    <th className="p-3 text-right">Entregadas</th>
+                    <th className="p-3 text-right">Novedades</th>
+                    <th className="p-3 text-right">Devueltas</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 font-medium text-gray-700">
+                  {tendencia.map((fila) => (
+                    <tr key={fila.fecha} className="hover:bg-gray-50/70">
+                      <td className="p-3">{fila.fecha}</td>
+                      <td className="p-3 text-right">{fila.registradas}</td>
+                      <td className="p-3 text-right text-green-700">{fila.entregadas}</td>
+                      <td className="p-3 text-right text-amber-700">{fila.novedades}</td>
+                      <td className="p-3 text-right text-red-700">{fila.devueltas}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 

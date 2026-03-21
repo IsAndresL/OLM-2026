@@ -4,6 +4,8 @@ import Layout from '../../components/Layout';
 import { liquidacionesService, usuariosService, descargarArchivo } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { formatCOP, formatFecha, formatPeriodo } from '../../utils/formato';
+import useAlerta from '../../hooks/useAlerta';
+import Alerta from '../../components/Alerta';
 
 const ESTADO_STYLES = {
   borrador: 'bg-amber-100 text-amber-700',
@@ -13,6 +15,7 @@ const ESTADO_STYLES = {
 
 export default function AdminLiquidaciones() {
   const { token } = useAuth();
+  const { alerta, mostrarAlerta, cerrarAlerta } = useAlerta();
 
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
@@ -53,6 +56,7 @@ export default function AdminLiquidaciones() {
       setLiquidaciones(liq || []);
     } catch (err) {
       setErrorMsg(err.message || 'No se pudo cargar el modulo de liquidaciones');
+      mostrarAlerta('error', err.message || 'No se pudo cargar el modulo de liquidaciones');
     } finally {
       setLoading(false);
     }
@@ -70,6 +74,7 @@ export default function AdminLiquidaciones() {
       setLiquidaciones(liq || []);
     } catch (err) {
       setErrorMsg(err.message || 'No se pudo filtrar la lista');
+      mostrarAlerta('error', err.message || 'No se pudo filtrar la lista');
     } finally {
       setLoading(false);
     }
@@ -77,7 +82,7 @@ export default function AdminLiquidaciones() {
 
   async function calcularPreview() {
     if (!nuevoForm.repartidor_id || !nuevoForm.fecha_desde || !nuevoForm.fecha_hasta) {
-      setErrorMsg('Debes completar repartidor y rango de fechas para calcular.');
+      mostrarAlerta('warning', 'Debes completar repartidor y rango de fechas para calcular.');
       return;
     }
 
@@ -92,6 +97,7 @@ export default function AdminLiquidaciones() {
       setCalcResult(result);
     } catch (err) {
       setErrorMsg(err.message || 'No se pudo calcular la liquidacion');
+      mostrarAlerta('error', err.message || 'No se pudo calcular la liquidacion');
     } finally {
       setCalcLoading(false);
     }
@@ -108,8 +114,10 @@ export default function AdminLiquidaciones() {
       setCalcResult(null);
       setNuevoForm({ repartidor_id: '', fecha_desde: '', fecha_hasta: '', observaciones: '' });
       await filtrar();
+      mostrarAlerta('success', 'Liquidacion creada correctamente.');
     } catch (err) {
       setErrorMsg(err.message || 'No se pudo guardar la liquidacion');
+      mostrarAlerta('error', err.message || 'No se pudo guardar la liquidacion');
     } finally {
       setSaveLoading(false);
     }
@@ -122,6 +130,7 @@ export default function AdminLiquidaciones() {
       setDetalle(data);
     } catch (err) {
       setErrorMsg(err.message || 'No se pudo cargar el detalle');
+      mostrarAlerta('error', err.message || 'No se pudo cargar el detalle');
     } finally {
       setDetalleLoading(false);
     }
@@ -138,8 +147,10 @@ export default function AdminLiquidaciones() {
       const refreshed = await liquidacionesService.detalle(token, detalle.id);
       setDetalle(refreshed);
       await filtrar();
+      mostrarAlerta('success', `Estado actualizado a ${estado}.`);
     } catch (err) {
       setErrorMsg(err.message || 'No se pudo actualizar el estado');
+      mostrarAlerta('error', err.message || 'No se pudo actualizar el estado');
     }
   }
 
@@ -147,8 +158,10 @@ export default function AdminLiquidaciones() {
     try {
       const blob = await liquidacionesService.descargarPDF(token, id);
       descargarArchivo(blob, `liquidacion-${String(id).slice(0, 8)}.pdf`);
+      mostrarAlerta('success', 'PDF generado correctamente.');
     } catch (err) {
       setErrorMsg(err.message || 'No se pudo descargar el PDF');
+      mostrarAlerta('error', err.message || 'No se pudo descargar el PDF');
     }
   }
 
@@ -162,6 +175,7 @@ export default function AdminLiquidaciones() {
 
   return (
     <Layout rol="admin">
+      <Alerta {...alerta} onClose={cerrarAlerta} />
       <div className="mb-8 flex items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-title text-gray-900">Liquidaciones</h1>

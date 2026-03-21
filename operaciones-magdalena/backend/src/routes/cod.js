@@ -158,6 +158,92 @@ router.get('/repartidor/pendientes', verificarToken, checkRole(['repartidor']), 
   }
 });
 
+router.get('/resumen-admin', verificarToken, checkRole(['admin']), checkAdminPermission('caja_cod.view'), async (req, res) => {
+  try {
+    const { empresa_id } = req.query;
+
+    let guiasQuery = supabase
+      .from('guias')
+      .select('id, numero_guia, nombre_destinatario, empresa_id, repartidor_id, monto_cod, cod_cobrado, cod_estado, estado_actual, updated_at')
+      .eq('es_cod', true)
+      .not('repartidor_id', 'is', null)
+      .in('cod_estado', ['pendiente', 'cobrado'])
+      .order('updated_at', { ascending: false });
+
+    if (empresa_id) guiasQuery = guiasQuery.eq('empresa_id', empresa_id);
+
+    const { data: guias, error: guiasError } = await guiasQuery;
+
+    if (guiasError) return res.status(500).json({ error: guiasError.message });
+
+    const repartidorIds = [...new Set((guias || []).map((g) => g.repartidor_id).filter(Boolean))];
+    let repartidoresMap = {};
+
+    if (repartidorIds.length > 0) {
+      const { data: repartidores, error: repError } = await supabase
+        .from('usuarios')
+        .select('id, nombre_completo')
+        .in('id', repartidorIds);
+
+      if (repError) return res.status(500).json({ error: repError.message });
+      repartidoresMap = (repartidores || []).reduce((acc, row) => {
+        acc[row.id] = row.nombre_completo;
+        return acc;
+      }, {});
+    }
+
+    const porGuia = (guias || []).map((g) => {
+      const monto = Number(g.cod_cobrado || g.monto_cod || 0);
+      return {
+        guia_id: g.id,
+        numero_guia: g.numero_guia,
+        nombre_destinatario: g.nombre_destinatario,
+        repartidor_id: g.repartidor_id,
+        repartidor_nombre: repartidoresMap[g.repartidor_id] || 'Sin nombre',
+        cod_estado: g.cod_estado,
+        estado_actual: g.estado_actual,
+        monto,
+        updated_at: g.updated_at,
+      };
+    });
+
+    const porRepartidorObj = porGuia.reduce((acc, row) => {
+      if (!acc[row.repartidor_id]) {
+        acc[row.repartidor_id] = {
+          repartidor_id: row.repartidor_id,
+          repartidor_nombre: row.repartidor_nombre,
+          total_monto: 0,
+          total_guias: 0,
+          pendientes_cobro: 0,
+          cobradas_no_entregadas: 0,
+        };
+      }
+      acc[row.repartidor_id].total_monto += row.monto;
+      acc[row.repartidor_id].total_guias += 1;
+      if (row.cod_estado === 'pendiente') acc[row.repartidor_id].pendientes_cobro += 1;
+      if (row.cod_estado === 'cobrado') acc[row.repartidor_id].cobradas_no_entregadas += 1;
+      return acc;
+    }, {});
+
+    const porRepartidor = Object.values(porRepartidorObj)
+      .map((r) => ({ ...r, total_monto: Number(r.total_monto.toFixed(2)) }))
+      .sort((a, b) => b.total_monto - a.total_monto);
+
+    const totalEnCirculacion = Number(
+      porGuia.reduce((acc, row) => acc + Number(row.monto || 0), 0).toFixed(2)
+    );
+
+    return res.json({
+      total_en_circulacion: totalEnCirculacion,
+      total_guias_en_circulacion: porGuia.length,
+      por_repartidor: porRepartidor,
+      por_guia: porGuia,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/corte-caja', verificarToken, checkRole(['repartidor']), async (req, res) => {
   try {
     const guiaIdsRaw = Array.isArray(req.body?.guia_ids) ? req.body.guia_ids : [];
@@ -224,7 +310,7 @@ router.post('/corte-caja', verificarToken, checkRole(['repartidor']), async (req
 
 router.get('/cortes', verificarToken, checkRole(['admin']), checkAdminPermission('caja_cod.view'), async (req, res) => {
   try {
-    const { estado, repartidor_id } = req.query;
+    const { estado, repartidor_id, empresa_id } = req.query;
 
     let query = supabase
       .from('cortes_caja')
@@ -237,7 +323,59 @@ router.get('/cortes', verificarToken, checkRole(['admin']), checkAdminPermission
     const { data: cortes, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    const repartidorIds = [...new Set((cortes || []).map((c) => c.repartidor_id).filter(Boolean))];
+    let cortesNormalizados = cortes || [];
+
+    if (empresa_id) {
+      const guiaIds = [
+        ...new Set(
+          cortesNormalizados
+            .flatMap((c) => (Array.isArray(c.guias_cod) ? c.guias_cod : []))
+            .filter(Boolean)
+        ),
+      ];
+
+      let guiasById = {};
+      if (guiaIds.length > 0) {
+        const { data: guias, error: guiasError } = await supabase
+          .from('guias')
+          .select('id, empresa_id, monto_cod, cod_cobrado')
+          .in('id', guiaIds);
+
+        if (guiasError) return res.status(500).json({ error: guiasError.message });
+        guiasById = (guias || []).reduce((acc, g) => {
+          acc[g.id] = g;
+          return acc;
+        }, {});
+      }
+
+      cortesNormalizados = cortesNormalizados
+        .map((corte) => {
+          const guiasFiltradas = (Array.isArray(corte.guias_cod) ? corte.guias_cod : []).filter((id) => {
+            const guia = guiasById[id];
+            return guia && String(guia.empresa_id) === String(empresa_id);
+          });
+
+          const montoFiltrado = Number(
+            guiasFiltradas
+              .reduce((acc, id) => {
+                const guia = guiasById[id];
+                return acc + Number(guia?.cod_cobrado || guia?.monto_cod || 0);
+              }, 0)
+              .toFixed(2)
+          );
+
+          return {
+            ...corte,
+            guias_cod: guiasFiltradas,
+            monto_declarado: montoFiltrado,
+            monto_recibido: montoFiltrado,
+            diferencia: 0,
+          };
+        })
+        .filter((corte) => (corte.guias_cod || []).length > 0);
+    }
+
+    const repartidorIds = [...new Set((cortesNormalizados || []).map((c) => c.repartidor_id).filter(Boolean))];
     let repartidoresMap = {};
 
     if (repartidorIds.length > 0) {
@@ -253,7 +391,7 @@ router.get('/cortes', verificarToken, checkRole(['admin']), checkAdminPermission
       }, {});
     }
 
-    const result = (cortes || []).map((corte) => ({
+    const result = (cortesNormalizados || []).map((corte) => ({
       id: corte.id,
       repartidor: {
         id: corte.repartidor_id,

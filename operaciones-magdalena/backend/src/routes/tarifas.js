@@ -104,9 +104,23 @@ router.post('/repartidores/:repartidor_id', verificarToken, checkRole(['admin'])
 
 router.get('/empresas', verificarToken, checkRole(['admin']), checkAdminPermission('tarifas.manage'), async (_req, res) => {
   try {
+    const { data: usuariosEmpresaActivos, error: usuariosError } = await supabase
+      .from('usuarios')
+      .select('empresa_id')
+      .eq('rol', 'empresa')
+      .eq('activo', true)
+      .not('empresa_id', 'is', null);
+
+    if (usuariosError) return res.status(500).json({ error: usuariosError.message });
+
+    const empresaIdsActivasPorUsuario = [...new Set((usuariosEmpresaActivos || []).map((u) => u.empresa_id).filter(Boolean))];
+    if (empresaIdsActivasPorUsuario.length === 0) return res.json([]);
+
     const { data: empresas, error: empError } = await supabase
       .from('empresas')
       .select('id, nombre')
+      .eq('activa', true)
+      .in('id', empresaIdsActivasPorUsuario)
       .order('nombre', { ascending: true });
 
     if (empError) return res.status(500).json({ error: empError.message });

@@ -5,7 +5,25 @@ const { verificarToken, checkRole } = require('../middlewares/auth');
 const { enviarNotificacion } = require('../services/whatsappService');
 
 const router = express.Router();
-const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
+
+async function signStoragePath(bucket, path, expiresIn = 3600) {
+  if (!path) return null;
+  if (String(path).startsWith('http')) return path;
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, expiresIn);
+  if (error || !data?.signedUrl) return path;
+  return data.signedUrl;
+}
+
+const imageUpload = multer({
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+    const allowedExt = ['jpg', 'jpeg', 'png', 'webp'];
+    if (allowedMimes.includes(file.mimetype) && allowedExt.includes(ext)) return cb(null, true);
+    return cb(new Error('Archivo no permitido. Solo imagenes JPG, PNG o WEBP'));
+  },
+}); // 5MB
 
 // GET /api/v1/repartidor/mis-guias
 router.get('/mis-guias', verificarToken, checkRole(['repartidor']), async (req, res) => {
@@ -19,12 +37,12 @@ router.get('/mis-guias', verificarToken, checkRole(['repartidor']), async (req, 
         direccion_destinatario, ciudad_destino, barrio,
         descripcion_paquete, peso_kg,
         es_cod, monto_cod, cod_cobrado, cod_metodo, cod_estado,
-        historial_estados ( estado, nota, created_at )
+        historial_estados ( estado, nota, created_at, foto_evidencia_url, firma_url, nombre_receptor, cedula_receptor )
       `)
       .eq('repartidor_id', req.user.id);
 
     // Filtrar por estados
-    if (estado === 'asignado' || estado === 'en_ruta') {
+    if (estado === 'asignado' || estado === 'en_ruta' || estado === 'entregado') {
       query = query.eq('estado_actual', estado);
     } else {
       // Por defecto estados "activos"
@@ -41,10 +59,21 @@ router.get('/mis-guias', verificarToken, checkRole(['repartidor']), async (req, 
     if (error) return res.status(500).json({ error: error.message });
 
     // Format latest historial
-    const formatted = guias.map(g => {
+    const formatted = await Promise.all((guias || []).map(async (g) => {
         // Find latest history record
         const sortedHistorial = g.historial_estados ? g.historial_estados.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : [];
-        const ultimo_estado = sortedHistorial.length > 0 ? sortedHistorial[0] : null;
+        const ultimoEstadoRaw = sortedHistorial.length > 0 ? sortedHistorial[0] : null;
+        let ultimo_estado = ultimoEstadoRaw;
+
+        if (ultimoEstadoRaw) {
+          const fotoUrl = await signStoragePath('evidencias', ultimoEstadoRaw.foto_evidencia_url);
+          const firmaUrl = await signStoragePath('firmas', ultimoEstadoRaw.firma_url);
+          ultimo_estado = {
+            ...ultimoEstadoRaw,
+            foto_evidencia_url: fotoUrl,
+            firma_url: firmaUrl,
+          };
+        }
         
         // Remove the array to save payload size, just keep the latest
         delete g.historial_estados;
@@ -53,7 +82,7 @@ router.get('/mis-guias', verificarToken, checkRole(['repartidor']), async (req, 
             ...g,
             ultimo_estado
         };
-    });
+    }));
 
     // Ordenar: primero en_ruta, luego asignado, luego el resto
     formatted.sort((a, b) => {
@@ -120,7 +149,7 @@ router.post('/guias/:guia_id/estado', verificarToken, checkRole(['repartidor']),
 });
 
 // POST /api/v1/repartidor/evidencia/:guia_id
-router.post('/evidencia/:guia_id', verificarToken, checkRole(['repartidor']), upload.single('foto'), async (req, res) => {
+router.post('/evidencia/:guia_id', verificarToken, checkRole(['repartidor']), imageUpload.single('foto'), async (req, res) => {
   try {
     const { guia_id } = req.params;
     if (!req.file) return res.status(400).json({ error: 'Foto requerida' });
@@ -152,7 +181,7 @@ router.post('/evidencia/:guia_id', verificarToken, checkRole(['repartidor']), up
 });
 
 // POST /api/v1/repartidor/firma/:guia_id
-router.post('/firma/:guia_id', verificarToken, checkRole(['repartidor']), upload.single('firma'), async (req, res) => {
+router.post('/firma/:guia_id', verificarToken, checkRole(['repartidor']), imageUpload.single('firma'), async (req, res) => {
   try {
     const { guia_id } = req.params;
     if (!req.file) return res.status(400).json({ error: 'Firma requerida' });

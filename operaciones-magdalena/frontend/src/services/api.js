@@ -41,15 +41,34 @@ export const guiasService = {
   editar:     (token, id, data)    => req('PUT',   `/guias/${id}`, data, token),
   actualizar: (token, id, data)    => req('PUT',   `/guias/${id}`, data, token),
   asignar:    (token, id, repId)   => req('PATCH', `/guias/${id}/asignar`, { repartidor_id: repId }, token),
+  asignarBulk: (token, guiaIds, repId) => req('POST', '/guias/bulk-assign', { guia_ids: guiaIds, repartidor_id: repId }, token),
+  deshacerAsignacionBulk: (token, cambios) => req('POST', '/guias/bulk-assign/undo', { cambios }, token),
   eliminar:   (token, id)          => req('DELETE', `/guias/${id}`, null, token),
-  bulkUpload: (token, file) => {
+  eliminarBulk: (token, guiaIds)   => req('POST', '/guias/bulk-delete', { guia_ids: guiaIds }, token),
+  bulkUpload: (token, file, options = {}) => {
     const fd = new FormData();
     fd.append('archivo', file);
+    if (options.empresa_id) fd.append('empresa_id', options.empresa_id);
     return fetch(`${BASE}/guias/bulk`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: fd,
-    }).then(r => r.json().then(d => r.ok ? d : Promise.reject(new Error(d.error || 'Error al subir'))));
+    }).then(async (r) => {
+      const raw = await r.text();
+      let data = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch (_e) {
+        data = null;
+      }
+
+      if (!r.ok) {
+        const message = data?.error || raw || `Error ${r.status} al subir archivo`;
+        return Promise.reject(new Error(message));
+      }
+
+      return data;
+    });
   },
 };
 
@@ -111,11 +130,21 @@ export const trackingService = {
 };
 
 export const dashboardService = {
-  resumen:   (token, fecha) =>
-    req('GET', `/dashboard/resumen${fecha ? '?fecha='+fecha : ''}`, null, token),
-  tendencia: (token, dias = 30, empresaId) => {
-    const qs = new URLSearchParams({ dias, ...(empresaId && { empresa_id: empresaId }) });
-    return req('GET', `/dashboard/tendencia?${qs}`, null, token);
+  resumen:   (token, params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.fecha) qs.append('fecha', params.fecha);
+    if (params.empresaId) qs.append('empresa_id', params.empresaId);
+    if (params.repartidorId) qs.append('repartidor_id', params.repartidorId);
+    return req('GET', `/dashboard/resumen${qs.toString() ? `?${qs.toString()}` : ''}`, null, token);
+  },
+  tendencia: (token, params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.dias) qs.append('dias', String(params.dias));
+    if (params.empresaId) qs.append('empresa_id', params.empresaId);
+    if (params.repartidorId) qs.append('repartidor_id', params.repartidorId);
+    if (params.fechaDesde) qs.append('fecha_desde', params.fechaDesde);
+    if (params.fechaHasta) qs.append('fecha_hasta', params.fechaHasta);
+    return req('GET', `/dashboard/tendencia${qs.toString() ? `?${qs.toString()}` : ''}`, null, token);
   },
   empresa:   (token) => req('GET', '/dashboard/empresa', null, token),
 };
@@ -130,12 +159,33 @@ export const reportesService = {
       return r.blob();
     });
   },
+  exportarDetallado: (token, params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return fetch(`${BASE}/reportes/exportar-detallado${qs ? '?'+qs : ''}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => {
+      if (!r.ok) throw new Error('Error al generar reporte detallado');
+      return r.blob();
+    });
+  },
+  exportarGuiaPdfDetallado: (token, guiaId) => {
+    return fetch(`${BASE}/reportes/guia/${guiaId}/pdf-detallado`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => {
+      if (!r.ok) throw new Error('Error al generar PDF detallado de la guia');
+      return r.blob();
+    });
+  },
 };
 
 export const codService = {
   activarCOD: (token, guiaId, data) => req('POST', `/cod/guia/${guiaId}/activar`, data, token),
   registrarCobro: (token, guiaId, data) => req('POST', `/cod/guia/${guiaId}/registrar-cobro`, data, token),
   pendientesRepartidor: (token) => req('GET', '/cod/repartidor/pendientes', null, token),
+  resumenAdmin: (token, params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return req('GET', `/cod/resumen-admin${qs ? '?'+qs : ''}`, null, token);
+  },
   registrarCorte: (token, data) => req('POST', '/cod/corte-caja', data, token),
   listarCortes: (token, params = {}) => {
     const qs = new URLSearchParams(params).toString();
@@ -175,14 +225,8 @@ export const gpsService = {
   actualizarUbicacion: (token, data) => req('PUT', '/gps/ubicacion', data, token),
   desactivarUbicacion: (token) => req('DELETE', '/gps/ubicacion', null, token),
   listarRepartidores: (token) => req('GET', '/gps/repartidores', null, token),
-  ubicacionPublica: (repartidorId) => req('GET', `/gps/repartidor/${repartidorId}/ubicacion`),
+  ubicacionPublica: (trackingToken) => req('GET', `/gps/public/${encodeURIComponent(trackingToken)}/ubicacion`),
   historial: (token, repartidorId, fecha) => req('GET', `/gps/repartidor/${repartidorId}/historial${fecha ? `?fecha=${fecha}` : ''}`, null, token),
-};
-
-export const rutasService = {
-  optimizar: (token, data) => req('POST', '/rutas/optimizar', data, token),
-  obtener: (token, repartidorId, fecha) => req('GET', `/rutas/repartidor/${repartidorId}${fecha ? `?fecha=${fecha}` : ''}`, null, token),
-  reordenar: (token, rutaId, ordenGuias) => req('PATCH', `/rutas/${rutaId}/orden`, { orden_guias: ordenGuias }, token),
 };
 
 export const zonasService = {
