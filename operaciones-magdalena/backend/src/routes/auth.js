@@ -27,8 +27,26 @@ router.post('/login', async (req, res) => {
   const { data: authData, error: authError } = await authClient.auth.signInWithPassword({
     email: rawEmail, password: rawPassword
   });
-  if (authError || !authData.user)
+  if (authError || !authData.user) {
+    const authMessage = String(authError?.message || '').toLowerCase();
+
+    console.error('[auth/login] Error autenticando en Supabase', {
+      email: rawEmail,
+      status: authError?.status,
+      code: authError?.code,
+      message: authError?.message,
+    });
+
+    if (authMessage.includes('email not confirmed')) {
+      return res.status(401).json({ error: 'Debes confirmar tu correo antes de iniciar sesión' });
+    }
+
+    if (authMessage.includes('invalid api key') || authMessage.includes('project not found')) {
+      return res.status(500).json({ error: 'Error de configuración de autenticación en el servidor' });
+    }
+
     return res.status(401).json({ error: 'Credenciales inválidas' });
+  }
 
   // Use the main service_role client (clean context) to query profile
   const { data: usuario, error: userError } = await supabase
