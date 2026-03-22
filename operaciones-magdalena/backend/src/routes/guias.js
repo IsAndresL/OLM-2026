@@ -512,6 +512,19 @@ router.post('/bulk-assign', verificarToken, checkRole(['admin']), checkAdminPerm
     const { error: histError } = await supabase.from('historial_estados').insert(historialRows);
     if (histError) return res.status(500).json({ error: histError.message });
 
+    // Disparar WhatsApp para cada guía asignada masivamente (best effort)
+    const { data: guiasNotificar, error: guiasNotificarError } = await supabase
+      .from('guias')
+      .select('id, numero_guia, nombre_destinatario, telefono_destinatario, direccion_destinatario, ciudad_destino')
+      .in('id', idsAsignables);
+
+    if (!guiasNotificarError && Array.isArray(guiasNotificar) && guiasNotificar.length > 0) {
+      const { enviarNotificacion } = require('../services/whatsappService');
+      guiasNotificar.forEach((g) => {
+        enviarNotificacion(g, 'asignado').catch(() => {});
+      });
+    }
+
     return res.json({
       asignadas: idsAsignables.length,
       ids_asignadas: idsAsignables,
