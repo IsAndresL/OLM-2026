@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { codService, firmaService, repartidorService } from '../../services/api';
-import { supabase } from '../../config/supabaseClient';
+import { codService, firmaService, gpsService, repartidorService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import LayoutMovil from '../../components/LayoutMovil';
 import BadgeEstado from '../../components/BadgeEstado';
@@ -87,24 +86,11 @@ export default function RepartidorGuias() {
           const { latitude: lat, longitude: lng, accuracy } = pos.coords;
 
           try {
-            await supabase
-              .from('ubicaciones_repartidor')
-              .upsert({
-                repartidor_id: user.id,
-                lat,
-                lng,
-                precision_m: Math.round(accuracy),
-                activo: true,
-                updated_at: new Date().toISOString(),
-              }, { onConflict: 'repartidor_id' });
-
-            await supabase
-              .from('historial_ubicaciones')
-              .insert({
-                repartidor_id: user.id,
-                lat,
-                lng,
-              });
+            await gpsService.actualizarUbicacion(token, {
+              lat,
+              lng,
+              precision_m: Math.round(accuracy),
+            });
           } catch (_err) {
             // El GPS no debe bloquear el flujo de entregas.
           }
@@ -122,14 +108,9 @@ export default function RepartidorGuias() {
     return () => {
       cancelled = true;
       clearInterval(interval);
-      supabase
-        .from('ubicaciones_repartidor')
-        .update({ activo: false })
-        .eq('repartidor_id', user.id)
-        .then(() => {})
-        .catch(() => {});
+      gpsService.desactivarUbicacion(token).then(() => {}).catch(() => {});
     };
-  }, [user?.id]);
+  }, [token, user?.id]);
 
   // -- SUMMARY MAP --
   const resumen = { enRuta: 0, asignadas: 0, otras: 0 };

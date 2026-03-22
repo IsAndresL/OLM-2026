@@ -40,13 +40,57 @@ function dayRange(fecha) {
 }
 
 router.put('/ubicacion', verificarToken, checkRole(['repartidor']), async (req, res) => {
-  // Fase deploy Vercel: escritura GPS migrada al frontend con Supabase Realtime.
-  return res.json({ ok: true, mode: 'realtime-frontend' });
+  try {
+    const lat = asNumber(req.body?.lat);
+    const lng = asNumber(req.body?.lng);
+    const precision = asNumber(req.body?.precision_m);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: 'lat y lng son obligatorios y deben ser numéricos' });
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'lat/lng fuera de rango válido' });
+    }
+
+    const payload = {
+      repartidor_id: req.user.id,
+      lat,
+      lng,
+      precision_m: Number.isFinite(precision) ? Math.round(precision) : null,
+      activo: true,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: upsertError } = await supabase
+      .from('ubicaciones_repartidor')
+      .upsert(payload, { onConflict: 'repartidor_id' });
+
+    if (upsertError) return res.status(500).json({ error: upsertError.message });
+
+    const { error: histError } = await supabase
+      .from('historial_ubicaciones')
+      .insert({ repartidor_id: req.user.id, lat, lng });
+
+    if (histError) return res.status(500).json({ error: histError.message });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 router.delete('/ubicacion', verificarToken, checkRole(['repartidor']), async (req, res) => {
-  // Fase deploy Vercel: inactivación GPS migrada al frontend con Supabase Realtime.
-  return res.json({ ok: true, mode: 'realtime-frontend' });
+  try {
+    const { error } = await supabase
+      .from('ubicaciones_repartidor')
+      .update({ activo: false, updated_at: new Date().toISOString() })
+      .eq('repartidor_id', req.user.id);
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/repartidores', verificarToken, checkRole(['admin']), checkAdminPermission('mapa.view'), async (req, res) => {
