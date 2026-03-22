@@ -9,6 +9,7 @@ const router = express.Router();
 
 const PAGE_W = 283;
 const PAGE_H = 425;
+const DEFAULT_TRACKING_BASE_URL = 'https://olmwebsite.vercel.app';
 const OUTER_MARGIN = 7;
 const LABEL_X = OUTER_MARGIN;
 const LABEL_Y = OUTER_MARGIN;
@@ -94,7 +95,11 @@ function drawOuterFrame(doc) {
 }
 
 async function generateAssetsForGuia(guia) {
-  const trackingBase = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+  const envFrontend = String(process.env.FRONTEND_URL || '').trim();
+  const fallbackBase = DEFAULT_TRACKING_BASE_URL;
+  const trackingBase = (envFrontend && !/localhost|127\.0\.0\.1/i.test(envFrontend)
+    ? envFrontend
+    : fallbackBase).replace(/\/$/, '');
   const trackingUrl = trackingBase
     ? `${trackingBase}/rastrear/${guia.numero_guia}`
     : guia.numero_guia;
