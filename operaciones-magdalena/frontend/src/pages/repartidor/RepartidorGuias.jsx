@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { codService, firmaService, gpsService, repartidorService } from '../../services/api';
+import { codService, firmaService, repartidorService } from '../../services/api';
+import { supabase } from '../../config/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import LayoutMovil from '../../components/LayoutMovil';
 import BadgeEstado from '../../components/BadgeEstado';
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react';
 
 export default function RepartidorGuias() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   
   const [guias, setGuias] = useState([]);
   const [guiasEntregadasHoy, setGuiasEntregadasHoy] = useState([]);
@@ -75,27 +76,43 @@ export default function RepartidorGuias() {
   }, [guias]);
 
   useEffect(() => {
-    if (!token || !navigator.geolocation) return undefined;
+    if (!user?.id || !navigator.geolocation) return undefined;
 
     let cancelled = false;
+
     const enviarUbicacion = () => {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           if (cancelled) return;
+          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+
           try {
-            await gpsService.actualizarUbicacion(token, {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              precision_m: Math.round(pos.coords.accuracy),
-            });
+            await supabase
+              .from('ubicaciones_repartidor')
+              .upsert({
+                repartidor_id: user.id,
+                lat,
+                lng,
+                precision_m: Math.round(accuracy),
+                activo: true,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'repartidor_id' });
+
+            await supabase
+              .from('historial_ubicaciones')
+              .insert({
+                repartidor_id: user.id,
+                lat,
+                lng,
+              });
           } catch (_err) {
-            // El GPS es opt-in y no debe bloquear la experiencia.
+            // El GPS no debe bloquear el flujo de entregas.
           }
         },
         () => {
-          // Si el usuario niega el permiso, se ignora silenciosamente.
+          // Si el usuario deniega GPS, el módulo sigue funcionando.
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
       );
     };
 
@@ -105,9 +122,14 @@ export default function RepartidorGuias() {
     return () => {
       cancelled = true;
       clearInterval(interval);
-      gpsService.desactivarUbicacion(token).catch(() => {});
+      supabase
+        .from('ubicaciones_repartidor')
+        .update({ activo: false })
+        .eq('repartidor_id', user.id)
+        .then(() => {})
+        .catch(() => {});
     };
-  }, [token]);
+  }, [user?.id]);
 
   // -- SUMMARY MAP --
   const resumen = { enRuta: 0, asignadas: 0, otras: 0 };

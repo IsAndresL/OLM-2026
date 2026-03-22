@@ -47,19 +47,24 @@ const gpsPublicLimiter = rateLimit({
   message: { error: 'Demasiadas consultas de ubicación pública. Intenta nuevamente en un momento.' },
 });
 
-app.use(cors({ 
-  origin: function (origin, callback) {
-    if (!origin) {
-      if (isProd) return callback(new Error('Origin requerido'));
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!isProd) {
       return callback(null, true);
     }
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  }, 
-  credentials: true 
+
+    const permitidos = [
+      process.env.FRONTEND_URL,
+      /\.vercel\.app$/,
+    ].filter(Boolean);
+
+    const esPermitido = !origin || permitidos.some((p) => (
+      typeof p === 'string' ? p === origin : p.test(origin)
+    ));
+
+    return callback(esPermitido ? null : new Error('CORS no permitido'), esPermitido);
+  },
+  credentials: true,
 }));
 
 app.use('/api/v1/auth/login', loginLimiter);
@@ -111,4 +116,12 @@ app.use((err, _req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`🚀 Backend en http://localhost:${PORT}`));
+
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`🚀 Backend en http://localhost:${PORT}`);
+    console.log(`   Env: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
+
+module.exports = app;

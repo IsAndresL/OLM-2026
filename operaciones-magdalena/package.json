@@ -1,0 +1,8 @@
+{
+  "name": "operaciones-magdalena-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "check-deploy": "node scripts/check-deploy.js"
+  }
+}

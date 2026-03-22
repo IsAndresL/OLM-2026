@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Marker } from 'react-leaflet';
-import { gpsService, trackingService } from '../../services/api';
+import { trackingService } from '../../services/api';
+import { supabase } from '../../config/supabaseClient';
 import MapaBase from '../../components/MapaBase';
 import LogoPlaceholder from '../../image/logo-olm.png'; // Make sure this path exists or replace intelligently
 // The user provided the logo path in Phase 1: c:\Users\AF\Documents\Proyectos Web Pages 2026\Trabajo\OLM 2026\operaciones-magdalena\frontend\src\image\logo-olm.png
@@ -47,28 +48,59 @@ export default function TrackingPage() {
   };
 
   useEffect(() => {
-    if (!data || data.estado_actual !== 'en_ruta' || !data.tracking_token) return undefined;
+    if (!data?.repartidor_id || data?.estado_actual !== 'en_ruta') return undefined;
 
     let cancelled = false;
 
-    const cargarGPS = async () => {
-      try {
-        const pos = await gpsService.ubicacionPublica(data.tracking_token);
-        if (!cancelled && pos?.lat && pos?.lng) setRepartidorPos({ lat: Number(pos.lat), lng: Number(pos.lng) });
-      } catch (_err) {
-        if (!cancelled) setRepartidorPos(null);
+    const cargarInicial = async () => {
+      const { data: current, error } = await supabase
+        .from('ubicaciones_repartidor')
+        .select('lat, lng, activo')
+        .eq('repartidor_id', data.repartidor_id)
+        .eq('activo', true)
+        .maybeSingle();
+
+      if (!cancelled && !error && current?.lat && current?.lng) {
+        setRepartidorPos({ lat: Number(current.lat), lng: Number(current.lng) });
       }
     };
 
-    setDestinoPos(null);
-    cargarGPS();
-    const interval = setInterval(cargarGPS, 30000);
+    cargarInicial();
+
+    const canal = supabase
+      .channel(`tracking-${data.repartidor_id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'ubicaciones_repartidor',
+          filter: `repartidor_id=eq.${data.repartidor_id}`,
+        },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            setRepartidorPos(null);
+            return;
+          }
+          if (payload.new?.activo === false) {
+            setRepartidorPos(null);
+            return;
+          }
+          if (payload.new?.lat && payload.new?.lng) {
+            setRepartidorPos({
+              lat: Number(payload.new.lat),
+              lng: Number(payload.new.lng),
+            });
+          }
+        }
+      )
+      .subscribe();
 
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      supabase.removeChannel(canal);
     };
-  }, [data?.tracking_token, data?.estado_actual]);
+  }, [data?.estado_actual, data?.repartidor_id]);
 
   const getEmoji = (estado) => {
     const emojis = {

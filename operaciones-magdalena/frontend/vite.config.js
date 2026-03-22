@@ -12,10 +12,13 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor:   ['react', 'react-dom', 'react-router-dom'],
-          charts:   ['recharts'],
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          charts: ['recharts'],
+          leaflet: ['leaflet', 'react-leaflet'],
+          supabase: ['@supabase/supabase-js'],
         }
       }
-    }
+    },
+    chunkSizeWarningLimit: 500,
   }
 })

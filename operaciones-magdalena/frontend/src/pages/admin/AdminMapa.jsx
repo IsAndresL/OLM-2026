@@ -3,7 +3,7 @@ import { Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import Layout from '../../components/Layout';
 import MapaBase from '../../components/MapaBase';
-import { gpsService } from '../../services/api';
+import { supabase } from '../../config/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 
 function minsFromNow(dateValue) {
@@ -38,14 +38,65 @@ export default function AdminMapa() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const [focusedRepId, setFocusedRepId] = useState(null);
   const [manualCenter, setManualCenter] = useState(null);
-  const [countdown, setCountdown] = useState(30);
+
+  function normalizeItems(ubicaciones = [], usersMap = {}, conteoMap = {}) {
+    return (ubicaciones || []).map((u) => ({
+      repartidor_id: u.repartidor_id,
+      nombre_completo: usersMap[u.repartidor_id]?.nombre_completo || `Repartidor ${String(u.repartidor_id).slice(0, 8)}`,
+      avatar_url: usersMap[u.repartidor_id]?.avatar_url || null,
+      lat: Number(u.lat),
+      lng: Number(u.lng),
+      precision_m: u.precision_m,
+      updated_at: u.updated_at,
+      guias_activas: conteoMap[u.repartidor_id] || 0,
+      ultimo_estado_hace: formatElapsed(u.updated_at),
+    }));
+  }
 
   async function cargar() {
     if (!token) return;
     setErrorMsg('');
     try {
-      const data = await gpsService.listarRepartidores(token);
-      setItems(data || []);
+      const { data: ubicaciones, error: ubicacionesError } = await supabase
+        .from('ubicaciones_repartidor')
+        .select('repartidor_id, lat, lng, precision_m, updated_at, activo')
+        .eq('activo', true)
+        .order('updated_at', { ascending: false });
+
+      if (ubicacionesError) throw new Error(ubicacionesError.message);
+
+      const repartidorIds = [...new Set((ubicaciones || []).map((u) => u.repartidor_id).filter(Boolean))];
+
+      let usersMap = {};
+      if (repartidorIds.length > 0) {
+        const { data: usuarios, error: usuariosError } = await supabase
+          .from('usuarios')
+          .select('id, nombre_completo, avatar_url')
+          .in('id', repartidorIds);
+        if (usuariosError) throw new Error(usuariosError.message);
+        usersMap = (usuarios || []).reduce((acc, u) => {
+          acc[u.id] = { nombre_completo: u.nombre_completo, avatar_url: u.avatar_url || null };
+          return acc;
+        }, {});
+      }
+
+      let conteoMap = {};
+      if (repartidorIds.length > 0) {
+        const { data: guiasEnRuta, error: guiasError } = await supabase
+          .from('guias')
+          .select('repartidor_id')
+          .in('repartidor_id', repartidorIds)
+          .eq('estado_actual', 'en_ruta');
+
+        if (guiasError) throw new Error(guiasError.message);
+        conteoMap = (guiasEnRuta || []).reduce((acc, g) => {
+          acc[g.repartidor_id] = (acc[g.repartidor_id] || 0) + 1;
+          return acc;
+        }, {});
+      }
+
+      const data = normalizeItems(ubicaciones || [], usersMap, conteoMap);
+      setItems(data);
       if ((!manualCenter || !Array.isArray(manualCenter)) && Array.isArray(data) && data.length > 0) {
         setManualCenter([Number(data[0].lat), Number(data[0].lng)]);
       }
@@ -54,7 +105,6 @@ export default function AdminMapa() {
       setErrorMsg(err.message || 'No se pudo cargar el mapa en vivo');
     } finally {
       setLoading(false);
-      setCountdown(30);
     }
   }
 
@@ -101,17 +151,22 @@ export default function AdminMapa() {
   }, [token]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          cargar();
-          return 30;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    if (!token) return undefined;
 
-    return () => clearInterval(interval);
+    const canal = supabase
+      .channel('gps-en-vivo')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'ubicaciones_repartidor' },
+        () => {
+          cargar();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(canal);
+    };
   }, [token]);
 
   const center = useMemo(() => {
@@ -133,10 +188,10 @@ export default function AdminMapa() {
       <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-3xl font-title text-gray-900">Mapa en tiempo real</h1>
-          <p className="text-sm text-gray-500 mt-1">Ubicación en vivo de repartidores activos.</p>
+          <p className="text-sm text-gray-500 mt-1">Ubicación en vivo de repartidores activos (Supabase Realtime).</p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="text-xs rounded-xl bg-gray-100 px-3 py-2 text-gray-600 font-semibold">Actualiza en: {countdown}s</div>
+          <div className="text-xs rounded-xl bg-gray-100 px-3 py-2 text-gray-600 font-semibold">Actualización automática activa</div>
           <button onClick={cargar} className="px-4 py-2 rounded-xl bg-gray-900 text-white text-sm font-bold">Actualizar</button>
         </div>
       </div>

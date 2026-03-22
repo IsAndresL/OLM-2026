@@ -40,65 +40,13 @@ function dayRange(fecha) {
 }
 
 router.put('/ubicacion', verificarToken, checkRole(['repartidor']), async (req, res) => {
-  try {
-    const lat = asNumber(req.body?.lat);
-    const lng = asNumber(req.body?.lng);
-    const precisionM = req.body?.precision_m == null ? null : Math.round(asNumber(req.body.precision_m));
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ error: 'lat y lng son requeridos' });
-    }
-
-    const upsertPayload = {
-      repartidor_id: req.user.id,
-      lat,
-      lng,
-      precision_m: Number.isFinite(precisionM) ? precisionM : null,
-      activo: true,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { error: upsertError } = await supabase
-      .from('ubicaciones_repartidor')
-      .upsert(upsertPayload, { onConflict: 'repartidor_id' });
-
-    if (upsertError) return res.status(500).json({ error: upsertError.message });
-
-    const { error: histError } = await supabase
-      .from('historial_ubicaciones')
-      .insert({
-        repartidor_id: req.user.id,
-        lat,
-        lng,
-      });
-
-    if (histError) return res.status(500).json({ error: histError.message });
-
-    // Limpieza best effort para mantener la tabla ligera.
-    await supabase
-      .from('historial_ubicaciones')
-      .delete()
-      .eq('repartidor_id', req.user.id)
-      .lt('created_at', toIsoNowMinusHours(24));
-
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
+  // Fase deploy Vercel: escritura GPS migrada al frontend con Supabase Realtime.
+  return res.json({ ok: true, mode: 'realtime-frontend' });
 });
 
 router.delete('/ubicacion', verificarToken, checkRole(['repartidor']), async (req, res) => {
-  try {
-    const { error } = await supabase
-      .from('ubicaciones_repartidor')
-      .update({ activo: false, updated_at: new Date().toISOString() })
-      .eq('repartidor_id', req.user.id);
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
+  // Fase deploy Vercel: inactivación GPS migrada al frontend con Supabase Realtime.
+  return res.json({ ok: true, mode: 'realtime-frontend' });
 });
 
 router.get('/repartidores', verificarToken, checkRole(['admin']), checkAdminPermission('mapa.view'), async (req, res) => {

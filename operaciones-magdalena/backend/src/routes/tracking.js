@@ -77,6 +77,7 @@ router.get('/:numero_guia', async (req, res) => {
       numero_guia: guia.numero_guia,
       ciudad_destino: guia.ciudad_destino,
       estado_actual: guia.estado_actual,
+      repartidor_id: guia.repartidor_id || null,
       tracking_token,
       historial: historialPublico
     });

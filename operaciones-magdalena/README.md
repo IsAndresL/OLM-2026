@@ -1,90 +1,126 @@
 # Operaciones Logísticas del Magdalena
 
-Sistema de gestión logística para distribución de última milla.
+Sistema de gestión logística de última milla.
 
-## Estructura del Proyecto
+## Estructura
 
 ```
 operaciones-magdalena/
-├── backend/     → API REST (Node.js + Express + Supabase)
-├── frontend/    → Interfaz web (React + Vite + Tailwind CSS)
-└── supabase_schema.sql → Esquema de base de datos
+├── backend/      # API Express
+├── frontend/     # React + Vite
+├── scripts/
+├── supabase_schema.sql
+└── supabase_gps_realtime_policies.sql
 ```
 
-## Stack Tecnológico
+## Deploy en Vercel (frontend + backend)
 
-- **Frontend**: React 18 + Vite + Tailwind CSS + React Router v6
-- **Backend**: Node.js + Express.js (API REST)
-- **Base de datos**: Supabase (PostgreSQL + Auth + Storage)
-- **Auth**: Supabase Auth + JWT propio firmado en Express
+### 1) Preparar base de datos en Supabase
 
-## Requisitos
+Ejecuta en SQL Editor, en este orden:
 
-- Node.js >= 18
-- npm >= 9
-- Cuenta en Supabase (proyecto configurado)
+1. `supabase_schema.sql`
+2. `supabase_gps_realtime_policies.sql`
 
-## Instalación
+Luego, en Supabase > Database > Replication, habilita Realtime para:
 
-### 1. Configurar Supabase
-1. Crea un proyecto en [Supabase](https://supabase.com)
-2. Ve a SQL Editor y ejecuta el contenido de `supabase_schema.sql`
-3. Ve a Authentication → Users → Add user para crear el administrador
-4. Inserta el perfil del admin en la tabla `usuarios` (ver instrucciones en el SQL)
+- `ubicaciones_repartidor`
 
-### 2. Backend
+### 2) Crear usuario administrador
+
+En Supabase Authentication agrega usuario admin, copia su UUID y ejecuta:
+
+```sql
+INSERT INTO usuarios (id, nombre_completo, email, rol, empresa_id)
+VALUES (
+	'UUID-DEL-ADMIN',
+	'Administrador Principal',
+	'admin@magdalenalogistica.com',
+	'admin',
+	'00000000-0000-0000-0000-000000000001'
+);
+```
+
+### 3) Deploy backend en Vercel
+
+1. Vercel > New Project > importar repo
+2. Root Directory: `backend`
+3. Framework preset: Other
+4. Install command: `npm install`
+5. Build command: vacío
+6. Output directory: vacío
+7. Variables de entorno: ver `backend/.env.example`
+
+Al terminar, guarda la URL, por ejemplo:
+
+- `https://tu-backend.vercel.app`
+
+### 4) Deploy frontend en Vercel
+
+1. Crear otro proyecto en Vercel desde el mismo repo
+2. Root Directory: `frontend`
+3. Framework preset: Vite
+4. Build command: `npm run build`
+5. Output directory: `dist`
+6. Variables de entorno:
+
+- `VITE_API_URL=https://tu-backend.vercel.app/api/v1`
+- `VITE_SUPABASE_URL=https://xxxxx.supabase.co`
+- `VITE_SUPABASE_ANON_KEY=...`
+
+### 5) Ajustar CORS de backend
+
+En variables del backend Vercel:
+
+- `FRONTEND_URL=https://tu-frontend.vercel.app`
+
+Haz redeploy del backend para aplicar.
+
+## Variables de entorno
+
+### Backend
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `JWT_SECRET`
+- `NODE_ENV=production`
+- `FRONTEND_URL`
+- `WHAPI_TOKEN`
+- `WHAPI_URL`
+- `BASE_URL`
+
+### Frontend
+
+- `VITE_API_URL`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+## Desarrollo local
+
+### Backend
+
 ```bash
 cd backend
 cp .env.example .env
-# Edita .env con tus credenciales de Supabase
 npm install
 npm run dev
 ```
-El servidor arrancará en `http://localhost:4000`
 
-### 3. Frontend
+### Frontend
+
 ```bash
 cd frontend
 cp .env.example .env
 npm install
 npm run dev
 ```
-La aplicación estará en `http://localhost:5173`
 
-## Roles del Sistema
+## Checklist pre-deploy
 
-| Rol | Acceso |
-|-----|--------|
-| `admin` | Panel completo: dashboard, guías, usuarios |
-| `empresa` | Dashboard y guías de su empresa |
-| `repartidor` | Lista de entregas asignadas |
-| `cliente` | Rastreo público de guía (sin login) |
+Desde la raíz:
 
-## Fases del Proyecto
+```bash
+npm run check-deploy
+```
 
-- **Fase 1** ✅ Autenticación, roles, estructura base
-- **Fase 2** ✅ Gestión de guías y etiquetas PDF
-- **Fase 3** ✅ App repartidor y tracking público
-- **Fase 4** ✅ Dashboard analítico y reportes
-
-## Deploy a Producción
-
-### Backend en Railway
-1. Crear cuenta en railway.app
-2. New project → Deploy from GitHub repo
-3. Seleccionar carpeta `/backend` como root directory
-4. Agregar variables de entorno (copiar de `.env.example` o `.env.production`)
-5. El deploy es automático en cada push a main (gracias al `Procfile` incluido)
-
-### Frontend en Vercel
-1. Crear cuenta en vercel.com
-2. Import project → GitHub repo
-3. Root directory: `/frontend`
-4. Build command: `npm run build`
-5. Output directory: `dist`
-6. Agregar variable `VITE_API_URL` con la URL pública generada por Railway (e.g., `https://tu-backend.railway.app/api/v1`)
-7. Deploy (el enrutamiento SPA funcionará gracias al archivo `public/_redirects`)
-
-### Variables de entorno requeridas (Backend):
-Asegúrate de configurar en Producción:
-`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `PORT`, `NODE_ENV=production`, `FRONTEND_URL`, `WHAPI_TOKEN`, `WHAPI_URL`.
+Si algo falla, el script te indica exactamente qué falta.

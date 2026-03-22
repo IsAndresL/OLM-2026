@@ -1,5 +1,24 @@
+# Dependencias
 node_modules/
+*/node_modules/
+
+# Variables de entorno — nunca commitear
 .env
 .env.local
+.env.production
+*/.env
+*/.env.local
+*/.env.production
+
+# Build
 dist/
+build/
+.next/
+
+# Sistema
 .DS_Store
+*.log
+npm-debug.log*
+
+# Vercel
+.vercel/
