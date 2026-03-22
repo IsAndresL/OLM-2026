@@ -330,6 +330,24 @@ async function generarEtiquetaPagina(doc, guia, isFirst = false) {
   });
 }
 
+async function generateEtiquetaPdfBuffer(guia) {
+  const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0 });
+  const chunks = [];
+
+  return new Promise(async (resolve, reject) => {
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    try {
+      await generarEtiquetaPagina(doc, guia, true);
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 // GET /api/v1/etiquetas/:guia_id
 router.get('/:guia_id', verificarToken, checkRole(['admin', 'empresa']), checkAdminPermission('etiquetas.generar'), async (req, res) => {
   try {
@@ -402,3 +420,4 @@ router.post('/bulk', verificarToken, checkRole(['admin', 'empresa']), checkAdmin
 });
 
 module.exports = router;
+module.exports.generateEtiquetaPdfBuffer = generateEtiquetaPdfBuffer;

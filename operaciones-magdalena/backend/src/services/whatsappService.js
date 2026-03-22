@@ -1,5 +1,5 @@
 const supabase = require('../config/supabase');
-const { generateEtiquetaAdjuntaPdfBuffer } = require('./etiquetaAdjuntaService');
+const { generateEtiquetaPdfBuffer } = require('../routes/etiquetas');
 
 const DEFAULT_TRACKING_BASE_URL = 'https://olmwebsite.vercel.app';
 const DEFAULT_WHAPI_URL = 'https://gate.whapi.cloud/messages/text';
@@ -112,7 +112,9 @@ async function enviarNotificacion(guia, nuevoEstado) {
 
     if (exito && nuevoEstado === 'en_ruta') {
       try {
-        const pdfBuffer = await generateEtiquetaAdjuntaPdfBuffer(guia);
+        const pdfBuffer = await generateEtiquetaPdfBuffer(guia);
+        const pdfBase64 = pdfBuffer.toString('base64');
+        const dataUri = `data:application/pdf;base64,${pdfBase64}`;
         const docResponse = await fetch(resolveWhapiDocumentUrl(), {
           method: 'POST',
           headers: {
@@ -121,7 +123,8 @@ async function enviarNotificacion(guia, nuevoEstado) {
           },
           body: JSON.stringify({
             to: `${tel}@s.whatsapp.net`,
-            media: `data:application/pdf;base64,${pdfBuffer.toString('base64')}`,
+            media: dataUri,
+            document: dataUri,
             filename: `${guia.numero_guia || 'guia'}.pdf`,
             caption: `Etiqueta de la guía ${guia.numero_guia || ''}`.trim(),
           }),
