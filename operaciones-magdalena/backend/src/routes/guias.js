@@ -520,9 +520,7 @@ router.post('/bulk-assign', verificarToken, checkRole(['admin']), checkAdminPerm
 
     if (!guiasNotificarError && Array.isArray(guiasNotificar) && guiasNotificar.length > 0) {
       const { enviarNotificacion } = require('../services/whatsappService');
-      guiasNotificar.forEach((g) => {
-        enviarNotificacion(g, 'asignado').catch(() => {});
-      });
+      await Promise.allSettled(guiasNotificar.map((g) => enviarNotificacion(g, 'asignado')));
     }
 
     return res.json({
@@ -715,7 +713,11 @@ router.patch('/:id/asignar', verificarToken, checkRole(['admin']), checkAdminPer
     const { enviarNotificacion } = require('../services/whatsappService');
     const { data: fullGuia } = await supabase.from('guias').select('*').eq('id', req.params.id).single();
     if (fullGuia) {
-       enviarNotificacion(fullGuia, 'asignado');
+      try {
+        await enviarNotificacion(fullGuia, 'asignado');
+      } catch (_notifyError) {
+        // No bloquear respuesta por fallo de notificación
+      }
     }
 
     return res.json(guia);

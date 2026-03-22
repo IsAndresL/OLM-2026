@@ -96,7 +96,7 @@ async function enviarNotificacion(guia, nuevoEstado) {
       data = null;
     }
 
-    const exito = Boolean(response.ok && (data?.sent === true || data?.message?.id));
+    const exito = Boolean(response.ok);
     if (!exito) {
       console.error(`[WhatsApp FALLIDO] guia=${guia.numero_guia} estado=${nuevoEstado} status=${response.status} body=${raw}`);
     }
@@ -110,11 +110,11 @@ async function enviarNotificacion(guia, nuevoEstado) {
       enviado_at: new Date().toISOString(),
     });
 
-    if (exito && nuevoEstado === 'en_ruta') {
+    if (nuevoEstado === 'en_ruta') {
       try {
         const pdfBuffer = await generateEtiquetaPdfBuffer(guia);
         const pdfBase64 = pdfBuffer.toString('base64');
-        const dataUri = `data:application/pdf;base64,${pdfBase64}`;
+        console.log(`[WhatsApp PDF] Intentando adjuntar etiqueta guia=${guia.numero_guia}`);
         const docResponse = await fetch(resolveWhapiDocumentUrl(), {
           method: 'POST',
           headers: {
@@ -123,8 +123,10 @@ async function enviarNotificacion(guia, nuevoEstado) {
           },
           body: JSON.stringify({
             to: `${tel}@s.whatsapp.net`,
-            media: dataUri,
-            document: dataUri,
+            media: pdfBase64,
+            mime_type: 'application/pdf',
+            no_encode: true,
+            no_cache: true,
             filename: `${guia.numero_guia || 'guia'}.pdf`,
             caption: `Etiqueta de la guía ${guia.numero_guia || ''}`.trim(),
           }),

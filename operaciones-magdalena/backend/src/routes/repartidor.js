@@ -139,8 +139,12 @@ router.post('/guias/:guia_id/estado', verificarToken, checkRole(['repartidor']),
       
     if (histError) return res.status(500).json({ error: histError.message });
 
-    // Disparar WhatsApp (best effort)
-    enviarNotificacion(guia, estado);
+    // Disparar WhatsApp (best effort) y esperar en serverless para evitar corte prematuro
+    try {
+      await enviarNotificacion(guia, estado);
+    } catch (_notifyError) {
+      // No bloquear el flujo por errores de notificación
+    }
 
     return res.json({ guia_id, nuevo_estado: estado, historial_id: historial.id });
   } catch (err) {
