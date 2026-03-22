@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { generateEtiquetaAdjuntaPdfBuffer } = require('./etiquetaAdjuntaService');
 
 const DEFAULT_TRACKING_BASE_URL = 'https://olmwebsite.vercel.app';
 const DEFAULT_WHAPI_URL = 'https://gate.whapi.cloud/messages/text';
@@ -32,6 +33,10 @@ function resolveWhapiUrl() {
   const withoutSlash = raw.replace(/\/+$/, '');
   if (/\/messages\/text$/i.test(withoutSlash)) return withoutSlash;
   return `${withoutSlash}/messages/text`;
+}
+
+function resolveWhapiDocumentUrl() {
+  return resolveWhapiUrl().replace(/\/messages\/text$/i, '/messages/document');
 }
 
 const mensajesEstado = {
@@ -104,6 +109,57 @@ async function enviarNotificacion(guia, nuevoEstado) {
       estado_envio: exito ? 'enviado' : 'fallido',
       enviado_at: new Date().toISOString(),
     });
+
+    if (exito && nuevoEstado === 'en_ruta') {
+      try {
+        const pdfBuffer = await generateEtiquetaAdjuntaPdfBuffer(guia);
+        const docResponse = await fetch(resolveWhapiDocumentUrl(), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.WHAPI_TOKEN}`,
+          },
+          body: JSON.stringify({
+            to: `${tel}@s.whatsapp.net`,
+            media: `data:application/pdf;base64,${pdfBuffer.toString('base64')}`,
+            filename: `${guia.numero_guia || 'guia'}.pdf`,
+            caption: `Etiqueta de la guía ${guia.numero_guia || ''}`.trim(),
+          }),
+        });
+
+        const docRaw = await docResponse.text();
+        if (!docResponse.ok) {
+          console.error(`[WhatsApp PDF FALLIDO] guia=${guia.numero_guia} status=${docResponse.status} body=${docRaw}`);
+          persistNotification({
+            guia_id: guia.id,
+            tipo: 'whatsapp',
+            destinatario_tel: tel,
+            mensaje: `Adjunto PDF etiqueta para ${guia.numero_guia || 'guia'}`,
+            estado_envio: 'fallido',
+            enviado_at: new Date().toISOString(),
+          });
+        } else {
+          persistNotification({
+            guia_id: guia.id,
+            tipo: 'whatsapp',
+            destinatario_tel: tel,
+            mensaje: `Adjunto PDF etiqueta para ${guia.numero_guia || 'guia'}`,
+            estado_envio: 'enviado',
+            enviado_at: new Date().toISOString(),
+          });
+        }
+      } catch (pdfErr) {
+        console.error(`[WhatsApp PDF ERROR] guia=${guia.numero_guia}: ${pdfErr.message}`);
+        persistNotification({
+          guia_id: guia.id,
+          tipo: 'whatsapp',
+          destinatario_tel: tel,
+          mensaje: `Adjunto PDF etiqueta para ${guia.numero_guia || 'guia'}`,
+          estado_envio: 'fallido',
+          enviado_at: new Date().toISOString(),
+        });
+      }
+    }
 
   } catch (err) {
     console.error(`[WhatsApp ERROR] guia=${guia.numero_guia} estado=${nuevoEstado}: ${err.message}`);
