@@ -39,7 +39,7 @@ function resolveWhapiDocumentUrl() {
   return resolveWhapiUrl().replace(/\/messages\/text$/i, '/messages/document');
 }
 
-async function sendWhapiDocumentWithRetry({ tel, token, guiaNumero, pdfBuffer }) {
+async function sendWhapiDocumentWithRetry({ tel, token, guiaNumero, pdfBuffer, caption }) {
   const url = resolveWhapiDocumentUrl();
   const pdfBase64 = pdfBuffer.toString('base64');
   const dataUri = `data:application/pdf;base64,${pdfBase64}`;
@@ -50,7 +50,7 @@ async function sendWhapiDocumentWithRetry({ tel, token, guiaNumero, pdfBuffer })
       media: dataUri,
       mime_type: 'application/pdf',
       filename: `${guiaNumero || 'guia'}.pdf`,
-      caption: `Etiqueta de la guía ${guiaNumero || ''}`.trim(),
+      caption: caption || '',
     },
     {
       to: `${tel}@s.whatsapp.net`,
@@ -59,7 +59,7 @@ async function sendWhapiDocumentWithRetry({ tel, token, guiaNumero, pdfBuffer })
       no_encode: true,
       no_cache: true,
       filename: `${guiaNumero || 'guia'}.pdf`,
-      caption: `Etiqueta de la guía ${guiaNumero || ''}`.trim(),
+      caption: caption || '',
     },
   ];
 
@@ -132,6 +132,30 @@ async function enviarNotificacion(guia, nuevoEstado) {
   const whapiUrl = resolveWhapiUrl();
 
   try {
+    if (nuevoEstado === 'en_ruta') {
+      const pdfBuffer = await generateEtiquetaPdfBuffer(guia);
+      console.log(`[WhatsApp PDF] Intentando adjuntar etiqueta guia=${guia.numero_guia}`);
+      const docResult = await sendWhapiDocumentWithRetry({
+        tel,
+        token: process.env.WHAPI_TOKEN,
+        guiaNumero: guia.numero_guia,
+        pdfBuffer,
+        caption: mensaje,
+      });
+
+      persistNotification({
+        guia_id: guia.id,
+        tipo: 'whatsapp',
+        destinatario_tel: tel,
+        mensaje,
+        estado_envio: docResult.ok ? 'enviado' : 'fallido',
+        enviado_at: new Date().toISOString(),
+      });
+
+      // En estado en_ruta se envía solo UN mensaje (documento + caption).
+      return;
+    }
+
     const response = await fetch(whapiUrl, {
       method: 'POST',
       headers: {
@@ -162,49 +186,6 @@ async function enviarNotificacion(guia, nuevoEstado) {
       estado_envio: exito ? 'enviado' : 'fallido',
       enviado_at: new Date().toISOString(),
     });
-
-    if (nuevoEstado === 'en_ruta') {
-      try {
-        const pdfBuffer = await generateEtiquetaPdfBuffer(guia);
-        console.log(`[WhatsApp PDF] Intentando adjuntar etiqueta guia=${guia.numero_guia}`);
-        const docResult = await sendWhapiDocumentWithRetry({
-          tel,
-          token: process.env.WHAPI_TOKEN,
-          guiaNumero: guia.numero_guia,
-          pdfBuffer,
-        });
-
-        if (!docResult.ok) {
-          persistNotification({
-            guia_id: guia.id,
-            tipo: 'whatsapp',
-            destinatario_tel: tel,
-            mensaje: `Adjunto PDF etiqueta para ${guia.numero_guia || 'guia'}`,
-            estado_envio: 'fallido',
-            enviado_at: new Date().toISOString(),
-          });
-        } else {
-          persistNotification({
-            guia_id: guia.id,
-            tipo: 'whatsapp',
-            destinatario_tel: tel,
-            mensaje: `Adjunto PDF etiqueta para ${guia.numero_guia || 'guia'}`,
-            estado_envio: 'enviado',
-            enviado_at: new Date().toISOString(),
-          });
-        }
-      } catch (pdfErr) {
-        console.error(`[WhatsApp PDF ERROR] guia=${guia.numero_guia}: ${pdfErr.message}`);
-        persistNotification({
-          guia_id: guia.id,
-          tipo: 'whatsapp',
-          destinatario_tel: tel,
-          mensaje: `Adjunto PDF etiqueta para ${guia.numero_guia || 'guia'}`,
-          estado_envio: 'fallido',
-          enviado_at: new Date().toISOString(),
-        });
-      }
-    }
 
   } catch (err) {
     console.error(`[WhatsApp ERROR] guia=${guia.numero_guia} estado=${nuevoEstado}: ${err.message}`);
