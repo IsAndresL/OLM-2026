@@ -39,6 +39,59 @@ function resolveWhapiDocumentUrl() {
   return resolveWhapiUrl().replace(/\/messages\/text$/i, '/messages/document');
 }
 
+async function sendWhapiDocumentWithRetry({ tel, token, guiaNumero, pdfBuffer }) {
+  const url = resolveWhapiDocumentUrl();
+  const pdfBase64 = pdfBuffer.toString('base64');
+  const dataUri = `data:application/pdf;base64,${pdfBase64}`;
+
+  const payloads = [
+    {
+      to: `${tel}@s.whatsapp.net`,
+      media: dataUri,
+      mime_type: 'application/pdf',
+      filename: `${guiaNumero || 'guia'}.pdf`,
+      caption: `Etiqueta de la guía ${guiaNumero || ''}`.trim(),
+    },
+    {
+      to: `${tel}@s.whatsapp.net`,
+      media: pdfBase64,
+      mime_type: 'application/pdf',
+      no_encode: true,
+      no_cache: true,
+      filename: `${guiaNumero || 'guia'}.pdf`,
+      caption: `Etiqueta de la guía ${guiaNumero || ''}`.trim(),
+    },
+  ];
+
+  let lastStatus = 0;
+  let lastBody = '';
+
+  for (let i = 0; i < payloads.length; i++) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(payloads[i]),
+    });
+
+    const raw = await response.text();
+    if (response.ok) {
+      if (i > 0) {
+        console.log(`[WhatsApp PDF] Reintento exitoso (modo ${i + 1}) guia=${guiaNumero}`);
+      }
+      return { ok: true, status: response.status, body: raw };
+    }
+
+    lastStatus = response.status;
+    lastBody = raw;
+    console.error(`[WhatsApp PDF FALLIDO] guia=${guiaNumero} modo=${i + 1} status=${response.status} body=${raw}`);
+  }
+
+  return { ok: false, status: lastStatus, body: lastBody };
+}
+
 const mensajesEstado = {
   asignado:             (guia) => `📦 Hola ${guia.nombre_destinatario}, tu pedido *${guia.numero_guia}* ya tiene repartidor asignado. Pronto llegará a la dirección registrada: ${guia.direccion_destinatario}.`,
   en_ruta:              (guia) => `🚚 Tu pedido *${guia.numero_guia}* está en camino. El repartidor se dirige a ${guia.direccion_destinatario}. Puedes rastrearlo en: ${getTrackingBaseUrl()}/rastrear/${guia.numero_guia}`,
@@ -113,28 +166,15 @@ async function enviarNotificacion(guia, nuevoEstado) {
     if (nuevoEstado === 'en_ruta') {
       try {
         const pdfBuffer = await generateEtiquetaPdfBuffer(guia);
-        const pdfBase64 = pdfBuffer.toString('base64');
         console.log(`[WhatsApp PDF] Intentando adjuntar etiqueta guia=${guia.numero_guia}`);
-        const docResponse = await fetch(resolveWhapiDocumentUrl(), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.WHAPI_TOKEN}`,
-          },
-          body: JSON.stringify({
-            to: `${tel}@s.whatsapp.net`,
-            media: pdfBase64,
-            mime_type: 'application/pdf',
-            no_encode: true,
-            no_cache: true,
-            filename: `${guia.numero_guia || 'guia'}.pdf`,
-            caption: `Etiqueta de la guía ${guia.numero_guia || ''}`.trim(),
-          }),
+        const docResult = await sendWhapiDocumentWithRetry({
+          tel,
+          token: process.env.WHAPI_TOKEN,
+          guiaNumero: guia.numero_guia,
+          pdfBuffer,
         });
 
-        const docRaw = await docResponse.text();
-        if (!docResponse.ok) {
-          console.error(`[WhatsApp PDF FALLIDO] guia=${guia.numero_guia} status=${docResponse.status} body=${docRaw}`);
+        if (!docResult.ok) {
           persistNotification({
             guia_id: guia.id,
             tipo: 'whatsapp',
