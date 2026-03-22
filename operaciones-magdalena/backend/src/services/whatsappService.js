@@ -35,7 +35,7 @@ function resolveWhapiUrl() {
 }
 
 const mensajesEstado = {
-  asignado:             (guia) => `📦 Hola ${guia.nombre_destinatario}, tu pedido *${guia.numero_guia}* ya tiene repartidor asignado. Pronto llegará a ${guia.ciudad_destino}.`,
+  asignado:             (guia) => `📦 Hola ${guia.nombre_destinatario}, tu pedido *${guia.numero_guia}* ya tiene repartidor asignado. Pronto llegará a la dirección registrada: ${guia.direccion_destinatario}.`,
   en_ruta:              (guia) => `🚚 Tu pedido *${guia.numero_guia}* está en camino. El repartidor se dirige a ${guia.direccion_destinatario}. Puedes rastrearlo en: ${getTrackingBaseUrl()}/rastrear/${guia.numero_guia}`,
   entregado:            (guia) => `✅ ¡Tu pedido *${guia.numero_guia}* fue entregado exitosamente! Gracias por confiar en Operaciones Logísticas del Magdalena.`,
   no_contesto:          (guia) => `📵 Intentamos entregar tu pedido *${guia.numero_guia}* pero no encontramos a nadie. Nos comunicaremos contigo para coordinar una nueva entrega.`,
