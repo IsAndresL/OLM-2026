@@ -128,6 +128,25 @@ async function signStoragePath(bucket, path, expiresIn = 3600) {
   return data.signedUrl;
 }
 
+function isIgnorableSchemaError(error) {
+  if (!error) return false;
+  if (error.code === '42P01' || error.code === '42703') return true; // relation/column does not exist
+  const msg = String(error.message || '').toLowerCase();
+  return msg.includes('does not exist') || msg.includes('no existe');
+}
+
+async function safeDeleteIn(table, column, values) {
+  const { error } = await supabase.from(table).delete().in(column, values);
+  if (error && !isIgnorableSchemaError(error)) return error;
+  return null;
+}
+
+async function safeDeleteEq(table, column, value) {
+  const { error } = await supabase.from(table).delete().eq(column, value);
+  if (error && !isIgnorableSchemaError(error)) return error;
+  return null;
+}
+
 // ── Helper: filtrar por empresa según rol ──
 function filtrarPorEmpresa(req, query) {
   if (req.user.rol === 'empresa') {
@@ -419,6 +438,15 @@ router.post('/bulk-delete', verificarToken, checkRole(['admin']), checkAdminPerm
       .in('guia_id', idsExistentes);
     if (histError) return res.status(500).json({ error: histError.message });
 
+    const devPrincipalError = await safeDeleteIn('devoluciones', 'guia_id', idsExistentes);
+    if (devPrincipalError) return res.status(500).json({ error: devPrincipalError.message });
+
+    const devRetornoError = await safeDeleteIn('devoluciones', 'guia_retorno_id', idsExistentes);
+    if (devRetornoError) return res.status(500).json({ error: devRetornoError.message });
+
+    const liqGuiasError = await safeDeleteIn('liquidacion_guias', 'guia_id', idsExistentes);
+    if (liqGuiasError) return res.status(500).json({ error: liqGuiasError.message });
+
     const { error: deleteError } = await supabase
       .from('guias')
       .delete()
@@ -693,6 +721,14 @@ router.delete('/:id', verificarToken, checkRole(['admin']), checkAdminPermission
 
     // Delete historial first (cascade should handle it, but to be safe)
     await supabase.from('historial_estados').delete().eq('guia_id', req.params.id);
+    const devPrincipalError = await safeDeleteEq('devoluciones', 'guia_id', req.params.id);
+    if (devPrincipalError) return res.status(500).json({ error: devPrincipalError.message });
+
+    const devRetornoError = await safeDeleteEq('devoluciones', 'guia_retorno_id', req.params.id);
+    if (devRetornoError) return res.status(500).json({ error: devRetornoError.message });
+
+    const liqGuiasError = await safeDeleteEq('liquidacion_guias', 'guia_id', req.params.id);
+    if (liqGuiasError) return res.status(500).json({ error: liqGuiasError.message });
     const { error: deleteError } = await supabase.from('guias').delete().eq('id', req.params.id);
     if (deleteError) return res.status(500).json({ error: deleteError.message });
 

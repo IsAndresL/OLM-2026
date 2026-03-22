@@ -187,7 +187,7 @@ export default function EmpresaDashboard() {
         {/* CHART */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
           <h3 className="font-title text-gray-800 text-lg mb-6">Últimos 7 Días</h3>
-          <div className="h-64 w-full">
+          <div className="h-64 w-full min-w-0">
             {loading ? <SkeletonCard height="h-full" /> : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={data?.tendencia_semanal} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>

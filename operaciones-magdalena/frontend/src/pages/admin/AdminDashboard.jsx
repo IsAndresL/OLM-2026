@@ -496,7 +496,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          <div className="h-72 w-full">
+          <div className="h-72 w-full min-w-0">
             {loadingTendencia ? <SkeletonCard height="h-full" /> : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={tendencia} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
