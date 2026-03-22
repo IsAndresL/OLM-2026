@@ -259,6 +259,24 @@ router.delete('/:id', verificarToken, checkRole(['admin']), checkAdminPermission
       return res.status(400).json({ error: 'No puedes eliminar tu propio usuario administrador' });
     }
 
+    const [cortesRes, liquidacionesRes, rutasRes] = await Promise.all([
+      supabase.from('cortes_caja').select('id', { count: 'exact', head: true }).or(`repartidor_id.eq.${req.params.id},admin_id.eq.${req.params.id}`),
+      supabase.from('liquidaciones_repartidor').select('id', { count: 'exact', head: true }).or(`repartidor_id.eq.${req.params.id},creado_por.eq.${req.params.id}`),
+      supabase.from('rutas_dia').select('id', { count: 'exact', head: true }).eq('repartidor_id', req.params.id),
+    ]);
+
+    const refError = cortesRes.error || liquidacionesRes.error || rutasRes.error;
+    if (refError) {
+      return res.status(500).json({ error: refError.message });
+    }
+
+    const totalReferencias = (cortesRes.count || 0) + (liquidacionesRes.count || 0) + (rutasRes.count || 0);
+    if (totalReferencias > 0) {
+      return res.status(409).json({
+        error: 'No se puede eliminar el usuario porque tiene historial operativo asociado (cortes/liquidaciones/rutas). Desactivalo en lugar de eliminarlo.',
+      });
+    }
+
     // Delete auth user via Admin API (which should also cascade delete the usuarios profile)
     const { error: authError } = await supabase.auth.admin.deleteUser(req.params.id);
     if (authError) return res.status(500).json({ error: 'Error al eliminar usuario de auth: ' + authError.message });
