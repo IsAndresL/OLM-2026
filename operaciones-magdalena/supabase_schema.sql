@@ -32,12 +32,15 @@ CREATE TABLE usuarios (
   rol              VARCHAR(20) NOT NULL CHECK (rol IN ('admin','empresa','repartidor')),
   empresa_id       UUID REFERENCES empresas(id) ON DELETE SET NULL,
   activo           BOOLEAN NOT NULL DEFAULT TRUE,
+  last_activity_at TIMESTAMPTZ,
+  is_online        BOOLEAN NOT NULL DEFAULT FALSE,
   es_principal     BOOLEAN NOT NULL DEFAULT FALSE,
   permisos         JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_usuarios_rol        ON usuarios(rol);
 CREATE INDEX idx_usuarios_empresa_id ON usuarios(empresa_id);
+CREATE INDEX idx_usuarios_last_activity_at ON usuarios(last_activity_at DESC);
 
 -- 3. GUÍAS
 CREATE TABLE guias (

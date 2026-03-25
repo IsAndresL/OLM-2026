@@ -2,8 +2,25 @@ const express  = require('express');
 const jwt      = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const supabase = require('../config/supabase');
-const { verificarToken } = require('../middlewares/auth');
+const { verificarToken, touchUserActivity } = require('../middlewares/auth');
 const router = express.Router();
+
+async function markUserOffline(userId) {
+  const { error } = await supabase
+    .from('usuarios')
+    .update({
+      is_online: false,
+      last_activity_at: new Date().toISOString(),
+    })
+    .eq('id', userId);
+
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (!msg.includes('last_activity_at') && !msg.includes('is_online')) {
+      throw error;
+    }
+  }
+}
 
 // POST /api/v1/auth/login
 router.post('/login', async (req, res) => {
@@ -72,6 +89,10 @@ router.post('/login', async (req, res) => {
     }
   );
 
+  touchUserActivity(usuario.id, { force: true }).catch((err) => {
+    console.error('[auth/login] No se pudo marcar usuario online:', err.message);
+  });
+
   return res.json({
     token,
     user: {
@@ -88,8 +109,19 @@ router.post('/login', async (req, res) => {
 });
 
 // POST /api/v1/auth/logout
-router.post('/logout', verificarToken, async (_req, res) => {
+router.post('/logout', verificarToken, async (req, res) => {
+  markUserOffline(req.user.id).catch((err) => {
+    console.error('[auth/logout] No se pudo marcar usuario offline:', err.message);
+  });
   return res.json({ message: 'Sesión cerrada' });
+});
+
+// POST /api/v1/auth/ping
+router.post('/ping', verificarToken, async (req, res) => {
+  touchUserActivity(req.user.id, { force: true }).catch((err) => {
+    console.error('[auth/ping] No se pudo actualizar actividad:', err.message);
+  });
+  return res.json({ ok: true });
 });
 
 // GET /api/v1/auth/me

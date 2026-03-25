@@ -10,6 +10,7 @@ const {
   adminHasPermission,
 } = require('../middlewares/auth');
 const router = express.Router();
+const ONLINE_WINDOW_MS = 2 * 60 * 1000;
 
 const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -42,18 +43,48 @@ function sanitizePermisos(inputPermisos, esPrincipal) {
   return normalizeAdminPermissions(filtered, esPrincipal);
 }
 
+function mapPresenceState(usuario) {
+  const rawLastActivity = usuario.last_activity_at || null;
+  const lastActivityTs = rawLastActivity ? new Date(rawLastActivity).getTime() : 0;
+  const isRecentlyActive = lastActivityTs > 0 && (Date.now() - lastActivityTs) <= ONLINE_WINDOW_MS;
+
+  return {
+    ...usuario,
+    last_activity_at: rawLastActivity,
+    is_online: Boolean(usuario.is_online) && isRecentlyActive,
+    online_timeout_seconds: Math.floor(ONLINE_WINDOW_MS / 1000),
+  };
+}
+
 // GET /api/v1/usuarios
 router.get('/', verificarToken, checkRole(['admin']), checkAdminPermission('usuarios.view'), async (req, res) => {
   const { rol, activo } = req.query;
   let query = supabase
     .from('usuarios')
-    .select('id, nombre_completo, email, rol, telefono, empresa_id, identificacion, activo, avatar_url, es_principal, permisos, created_at, empresa:empresas(id, nombre, nit, email, telefono)')
+    .select('id, nombre_completo, email, rol, telefono, empresa_id, identificacion, activo, avatar_url, es_principal, permisos, created_at, last_activity_at, is_online, empresa:empresas(id, nombre, nit, email, telefono)')
     .order('created_at', { ascending: false });
   if (rol)    query = query.eq('rol', rol);
   if (activo !== undefined) query = query.eq('activo', activo === 'true');
-  const { data, error } = await query;
+  let { data, error } = await query;
+
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    const missingPresenceColumns = msg.includes('last_activity_at') || msg.includes('is_online');
+    if (missingPresenceColumns) {
+      let fallbackQuery = supabase
+        .from('usuarios')
+        .select('id, nombre_completo, email, rol, telefono, empresa_id, identificacion, activo, avatar_url, es_principal, permisos, created_at, empresa:empresas(id, nombre, nit, email, telefono)')
+        .order('created_at', { ascending: false });
+      if (rol) fallbackQuery = fallbackQuery.eq('rol', rol);
+      if (activo !== undefined) fallbackQuery = fallbackQuery.eq('activo', activo === 'true');
+      const fallbackRes = await fallbackQuery;
+      data = (fallbackRes.data || []).map((usuario) => mapPresenceState(usuario));
+      error = fallbackRes.error;
+    }
+  }
+
   if (error) return res.status(500).json({ error: error.message });
-  return res.json(data);
+  return res.json((data || []).map((usuario) => mapPresenceState(usuario)));
 });
 
 // POST /api/v1/usuarios

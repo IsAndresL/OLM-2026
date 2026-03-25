@@ -250,6 +250,20 @@ export default function AdminUsuarios() {
     return colors[rol] || 'bg-gray-100 text-gray-700';
   };
 
+  const isUserOnline = (u) => Boolean(u.is_online);
+
+  function formatLastActivity(lastActivityAt) {
+    if (!lastActivityAt) return 'Sin actividad reciente';
+    const ts = new Date(lastActivityAt).getTime();
+    if (Number.isNaN(ts)) return 'Sin actividad reciente';
+
+    const diffSec = Math.max(Math.floor((Date.now() - ts) / 1000), 0);
+    if (diffSec < 60) return 'Hace unos segundos';
+    if (diffSec < 3600) return `Hace ${Math.floor(diffSec / 60)} min`;
+    if (diffSec < 86400) return `Hace ${Math.floor(diffSec / 3600)} h`;
+    return `Hace ${Math.floor(diffSec / 86400)} d`;
+  }
+
   return (
     <Layout>
       <div className="space-y-6">
@@ -559,14 +573,21 @@ export default function AdminUsuarios() {
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          <button 
-                            onClick={() => handleToggleEstado(u.id, u.activo)}
-                            disabled={u.email === 'admin@magdalenalogistica.com' || !canEditUsers}
-                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all border shadow-sm ${u.activo ? 'bg-green-50 text-green-700 border-green-100' : 'bg-red-50 text-red-600 border-red-100 opacity-60'}`}
-                          >
-                            {u.activo ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
-                            {u.activo ? 'ACTIVO' : 'INACTIVO'}
-                          </button>
+                          <div className="space-y-1.5">
+                            <button 
+                              onClick={() => handleToggleEstado(u.id, u.activo)}
+                              disabled={u.email === 'admin@magdalenalogistica.com' || !canEditUsers}
+                              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all border shadow-sm ${u.activo ? 'bg-green-50 text-green-700 border-green-100' : 'bg-red-50 text-red-600 border-red-100 opacity-60'}`}
+                            >
+                              {u.activo ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
+                              {u.activo ? 'ACTIVO' : 'INACTIVO'}
+                            </button>
+                            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isUserOnline(u) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${isUserOnline(u) ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                              {isUserOnline(u) ? 'EN LINEA' : 'FUERA DE LINEA'}
+                            </span>
+                            <p className="text-[10px] text-slate-400 font-semibold">{formatLastActivity(u.last_activity_at)}</p>
+                          </div>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -1,5 +1,8 @@
 -- 1. Añadir campos 'identificacion' a usuarios (para Repartidor)
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS identificacion VARCHAR(50);
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS is_online BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_usuarios_last_activity_at ON usuarios(last_activity_at DESC);
 
 -- 2. Permisos granulares para administradores
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS es_principal BOOLEAN NOT NULL DEFAULT FALSE;
@@ -8,7 +11,7 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS permisos JSONB NOT NULL DEFAULT '{
 -- 3. Bootstrap de administrador principal (si existe el correo base)
 UPDATE usuarios
 SET es_principal = TRUE
-WHERE email = 'admin@magdalenalogistica.com';
+WHERE email = 'andresfluna03@gmail.com';
 
 -- 4. Fallback: si no hay principal, marcar al admin mas antiguo
 WITH admin_mas_antiguo AS (

@@ -1,6 +1,9 @@
 const jwt      = require('jsonwebtoken');
 const supabase = require('../config/supabase');
 
+const LAST_ACTIVITY_WRITE_MS = 60 * 1000;
+const lastActivityWriteCache = new Map();
+
 const ADMIN_PERMISSION_KEYS = [
   'dashboard.view',
   'guias.view',
@@ -54,6 +57,36 @@ function adminHasPermission(user, permission) {
   return Boolean(user.permisos && user.permisos[permission]);
 }
 
+async function touchUserActivity(userId, { force = false } = {}) {
+  const now = Date.now();
+  const lastWrite = lastActivityWriteCache.get(userId) || 0;
+  if (!force && (now - lastWrite) < LAST_ACTIVITY_WRITE_MS) return;
+
+  lastActivityWriteCache.set(userId, now);
+
+  if (lastActivityWriteCache.size > 500) {
+    const maxAge = 24 * 60 * 60 * 1000;
+    for (const [cachedUserId, ts] of lastActivityWriteCache.entries()) {
+      if ((now - ts) > maxAge) lastActivityWriteCache.delete(cachedUserId);
+    }
+  }
+
+  const { error } = await supabase
+    .from('usuarios')
+    .update({
+      last_activity_at: new Date(now).toISOString(),
+      is_online: true,
+    })
+    .eq('id', userId);
+
+  if (error) {
+    const msg = String(error.message || '').toLowerCase();
+    if (!msg.includes('last_activity_at') && !msg.includes('is_online')) {
+      throw error;
+    }
+  }
+}
+
 async function verificarToken(req, res, next) {
   const header = req.headers['authorization'];
   if (!header?.startsWith('Bearer '))
@@ -78,6 +111,9 @@ async function verificarToken(req, res, next) {
       es_principal: Boolean(usuario.es_principal),
       permisos: normalizeAdminPermissions(usuario.permisos, Boolean(usuario.es_principal)),
     };
+    touchUserActivity(decoded.sub).catch((err) => {
+      console.error('[auth] No se pudo registrar actividad del usuario:', err.message);
+    });
     next();
   } catch (err) {
     const msg = err.name === 'TokenExpiredError' ? 'Token expirado' : 'Token inválido';
@@ -111,4 +147,5 @@ module.exports = {
   ADMIN_PERMISSION_KEYS,
   normalizeAdminPermissions,
   adminHasPermission,
+  touchUserActivity,
 };

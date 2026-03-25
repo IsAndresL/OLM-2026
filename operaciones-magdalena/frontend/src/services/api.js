@@ -42,6 +42,7 @@ export const authService = {
   login:  (email, password) => req('POST', '/auth/login', { email, password }),
   logout: (token)           => req('POST', '/auth/logout', null, token),
   me:     (token)           => req('GET',  '/auth/me', null, token),
+  ping:   (token)           => req('POST', '/auth/ping', null, token),
 };
 
 export const usuariosService = {
