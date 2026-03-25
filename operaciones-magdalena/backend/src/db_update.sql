@@ -14,7 +14,7 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS permisos JSONB NOT NULL DEFAULT '{
 UPDATE usuarios
 SET es_principal = TRUE
 WHERE email = 'andresfluna03@gmail.com';
-
+ 
 -- 4. Fallback: si no hay principal, marcar al admin mas antiguo
 WITH admin_mas_antiguo AS (
 	SELECT id
