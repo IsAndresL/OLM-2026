@@ -34,6 +34,7 @@ CREATE TABLE usuarios (
   activo           BOOLEAN NOT NULL DEFAULT TRUE,
   last_activity_at TIMESTAMPTZ,
   is_online        BOOLEAN NOT NULL DEFAULT FALSE,
+  current_session_id VARCHAR(100),
   es_principal     BOOLEAN NOT NULL DEFAULT FALSE,
   permisos         JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -41,6 +42,7 @@ CREATE TABLE usuarios (
 CREATE INDEX idx_usuarios_rol        ON usuarios(rol);
 CREATE INDEX idx_usuarios_empresa_id ON usuarios(empresa_id);
 CREATE INDEX idx_usuarios_last_activity_at ON usuarios(last_activity_at DESC);
+CREATE INDEX idx_usuarios_current_session_id ON usuarios(current_session_id);
 
 -- 3. GUÍAS
 CREATE TABLE guias (

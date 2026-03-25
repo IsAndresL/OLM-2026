@@ -38,6 +38,7 @@ export function AuthProvider({ children }) {
   const warnTimeoutRef = useRef(null);
   const logoutTimeoutRef = useRef(null);
   const countdownIntervalRef = useRef(null);
+  const handledSessionConflictRef = useRef(false);
 
   useEffect(() => {
     tokenRef.current = token;
@@ -57,9 +58,24 @@ export function AuthProvider({ children }) {
     setUser(null);
     setToken(null);
     setShowIdleWarning(false);
+    handledSessionConflictRef.current = false;
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     clearInactivityTimers();
+  }
+
+  function isSessionConflictError(error) {
+    const msg = String(error?.message || '').toLowerCase();
+    return msg.includes('otro dispositivo') || msg.includes('sesion fue cerrada');
+  }
+
+  function handleSessionConflictLogout(error) {
+    if (handledSessionConflictRef.current) return;
+    handledSessionConflictRef.current = true;
+    const serverMsg = String(error?.message || '').trim();
+    const finalMsg = serverMsg || 'Esta cuenta se inicio en otro dispositivo. Para iniciar sesion aqui, se cerrara la sesion anterior.';
+    window.alert(finalMsg);
+    executeLogout({ notifyServer: false });
   }
 
   function notifyServerLogout(jwtToken) {
@@ -132,8 +148,13 @@ export function AuthProvider({ children }) {
         const freshUser = data?.user ? normalizeUser({ ...cachedUser, ...data.user }) : normalizedCachedUser;
         setUser(freshUser);
         localStorage.setItem('user', JSON.stringify(freshUser));
-      } catch {
+      } catch (err) {
         if (!isMounted) return;
+        if (isSessionConflictError(err)) {
+          handleSessionConflictLogout(err);
+          if (isMounted) setLoading(false);
+          return;
+        }
         clearLocalSession();
       } finally {
         if (isMounted) setLoading(false);
@@ -148,6 +169,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   function login(userData, jwtToken) {
+    handledSessionConflictRef.current = false;
     const normalized = normalizeUser(userData);
     setUser(normalized); setToken(jwtToken);
     localStorage.setItem('token', jwtToken);
@@ -205,7 +227,11 @@ export function AuthProvider({ children }) {
     const id = setInterval(() => {
       const activeToken = tokenRef.current;
       if (!activeToken) return;
-      authService.ping(activeToken).catch(() => {});
+      authService.ping(activeToken).catch((err) => {
+        if (isSessionConflictError(err)) {
+          handleSessionConflictLogout(err);
+        }
+      });
     }, HEARTBEAT_MS);
 
     return () => clearInterval(id);

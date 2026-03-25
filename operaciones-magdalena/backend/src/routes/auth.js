@@ -1,21 +1,75 @@
 const express  = require('express');
 const jwt      = require('jsonwebtoken');
+const { randomUUID } = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const supabase = require('../config/supabase');
 const { verificarToken, touchUserActivity } = require('../middlewares/auth');
 const router = express.Router();
 
-async function markUserOffline(userId) {
-  const { error } = await supabase
+function hasMissingColumnError(error, columnName) {
+  const msg = String(error?.message || '').toLowerCase();
+  return msg.includes(String(columnName || '').toLowerCase());
+}
+
+function newSessionId() {
+  return randomUUID();
+}
+
+async function saveCurrentSession(userId, sessionId) {
+  const nowIso = new Date().toISOString();
+  const result = await supabase
     .from('usuarios')
     .update({
-      is_online: false,
-      last_activity_at: new Date().toISOString(),
+      current_session_id: sessionId,
+      is_online: true,
+      last_activity_at: nowIso,
     })
     .eq('id', userId);
 
+  if (!result.error) return;
+
+  if (hasMissingColumnError(result.error, 'current_session_id')) {
+    await supabase
+      .from('usuarios')
+      .update({
+        is_online: true,
+        last_activity_at: nowIso,
+      })
+      .eq('id', userId);
+    return;
+  }
+
+  throw result.error;
+}
+
+async function markUserOffline(userId, sessionId = null) {
+  const nowIso = new Date().toISOString();
+  let query = supabase
+    .from('usuarios')
+    .update({
+      is_online: false,
+      last_activity_at: nowIso,
+      current_session_id: null,
+    })
+    .eq('id', userId);
+
+  if (sessionId) query = query.eq('current_session_id', sessionId);
+
+  const { error } = await query;
+
   if (error) {
-    const msg = String(error.message || '').toLowerCase();
+    if (hasMissingColumnError(error, 'current_session_id')) {
+      await supabase
+        .from('usuarios')
+        .update({
+          is_online: false,
+          last_activity_at: nowIso,
+        })
+        .eq('id', userId);
+      return;
+    }
+
+    const msg = String(error?.message || '').toLowerCase();
     if (!msg.includes('last_activity_at') && !msg.includes('is_online')) {
       throw error;
     }
@@ -79,8 +133,10 @@ router.post('/login', async (req, res) => {
   if (!['admin', 'empresa', 'repartidor'].includes(usuario.rol))
     return res.status(401).json({ error: 'Acceso no autorizado' });
 
+  const sessionId = newSessionId();
+
   const token = jwt.sign(
-    { sub: usuario.id, rol: usuario.rol, empresa_id: usuario.empresa_id },
+    { sub: usuario.id, rol: usuario.rol, empresa_id: usuario.empresa_id, sid: sessionId },
     process.env.JWT_SECRET,
     {
       expiresIn: '8h',
@@ -88,6 +144,13 @@ router.post('/login', async (req, res) => {
       audience: process.env.JWT_AUDIENCE || 'olm-app',
     }
   );
+
+  try {
+    await saveCurrentSession(usuario.id, sessionId);
+  } catch (sessionError) {
+    console.error('[auth/login] No se pudo guardar sesion activa:', sessionError.message);
+    return res.status(500).json({ error: 'No se pudo iniciar sesion en este momento. Intenta nuevamente.' });
+  }
 
   touchUserActivity(usuario.id, { force: true }).catch((err) => {
     console.error('[auth/login] No se pudo marcar usuario online:', err.message);
@@ -110,7 +173,7 @@ router.post('/login', async (req, res) => {
 
 // POST /api/v1/auth/logout
 router.post('/logout', verificarToken, async (req, res) => {
-  markUserOffline(req.user.id).catch((err) => {
+  markUserOffline(req.user.id, req.auth?.sid || null).catch((err) => {
     console.error('[auth/logout] No se pudo marcar usuario offline:', err.message);
   });
   return res.json({ message: 'Sesión cerrada' });

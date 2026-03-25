@@ -57,6 +57,11 @@ function adminHasPermission(user, permission) {
   return Boolean(user.permisos && user.permisos[permission]);
 }
 
+function hasMissingColumnError(error, columnName) {
+  const msg = String(error?.message || '').toLowerCase();
+  return msg.includes(String(columnName || '').toLowerCase());
+}
+
 async function touchUserActivity(userId, { force = false } = {}) {
   const now = Date.now();
   const lastWrite = lastActivityWriteCache.get(userId) || 0;
@@ -98,19 +103,44 @@ async function verificarToken(req, res, next) {
       issuer: process.env.JWT_ISSUER || 'olm-backend',
       audience: process.env.JWT_AUDIENCE || 'olm-app',
     });
-    const { data: usuario, error } = await supabase
+
+    let sessionColumnsAvailable = true;
+    let { data: usuario, error } = await supabase
       .from('usuarios')
-      .select('id, nombre_completo, email, rol, empresa_id, activo, avatar_url, es_principal, permisos')
+      .select('id, nombre_completo, email, rol, empresa_id, activo, avatar_url, es_principal, permisos, current_session_id')
       .eq('id', decoded.sub)
       .single();
 
+    if (error && hasMissingColumnError(error, 'current_session_id')) {
+      sessionColumnsAvailable = false;
+      const fallback = await supabase
+        .from('usuarios')
+        .select('id, nombre_completo, email, rol, empresa_id, activo, avatar_url, es_principal, permisos')
+        .eq('id', decoded.sub)
+        .single();
+      usuario = fallback.data;
+      error = fallback.error;
+    }
+
     if (error || !usuario)  return res.status(401).json({ error: 'Usuario no encontrado' });
     if (!usuario.activo)    return res.status(403).json({ error: 'Usuario desactivado' });
+
+    if (sessionColumnsAvailable) {
+      const tokenSessionId = typeof decoded.sid === 'string' ? decoded.sid : null;
+      const activeSessionId = usuario.current_session_id || null;
+      if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
+        return res.status(401).json({
+          error: 'Tu sesion fue cerrada porque esta cuenta se inicio en otro dispositivo. Debes iniciar sesion de nuevo para continuar aqui.',
+        });
+      }
+    }
+
     req.user = {
       ...usuario,
       es_principal: Boolean(usuario.es_principal),
       permisos: normalizeAdminPermissions(usuario.permisos, Boolean(usuario.es_principal)),
     };
+    req.auth = decoded;
     touchUserActivity(decoded.sub).catch((err) => {
       console.error('[auth] No se pudo registrar actividad del usuario:', err.message);
     });

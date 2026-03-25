@@ -2,7 +2,9 @@
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS identificacion VARCHAR(50);
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS is_online BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS current_session_id VARCHAR(100);
 CREATE INDEX IF NOT EXISTS idx_usuarios_last_activity_at ON usuarios(last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS idx_usuarios_current_session_id ON usuarios(current_session_id);
 
 -- 2. Permisos granulares para administradores
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS es_principal BOOLEAN NOT NULL DEFAULT FALSE;

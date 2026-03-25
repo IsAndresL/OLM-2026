@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
 import { useAuth } from '../../context/AuthContext';
 import { usuariosService, authService } from '../../services/api';
-import { ShieldCheck, UserPlus, Edit2, Trash2, Camera, Check, X, ShieldAlert, User as UserIcon } from 'lucide-react';
+import { ShieldCheck, UserPlus, Edit2, Trash2, Camera, Check, X, ShieldAlert, User as UserIcon, LogOut } from 'lucide-react';
 import useAlerta from '../../hooks/useAlerta';
 import Alerta from '../../components/Alerta';
 import {
@@ -238,6 +238,29 @@ export default function AdminUsuarios() {
       cargarUsuarios();
     } catch (err) {
       alert('Error: ' + err.message);
+    }
+  }
+
+  async function handleCerrarSesionRemota(usuario) {
+    if (!canEditUsers) {
+      mostrarAlerta('error', 'No tienes permiso para editar usuarios');
+      return;
+    }
+
+    if (usuario.rol !== 'repartidor') {
+      mostrarAlerta('error', 'Solo se permite cierre remoto para repartidores');
+      return;
+    }
+
+    const ok = window.confirm(`Se cerrara la sesion activa de ${usuario.nombre_completo}. Deseas continuar?`);
+    if (!ok) return;
+
+    try {
+      await usuariosService.cerrarSesion(token, usuario.id);
+      mostrarAlerta('success', `Sesion cerrada para ${usuario.nombre_completo}`);
+      cargarUsuarios();
+    } catch (err) {
+      mostrarAlerta('error', err.message);
     }
   }
 
@@ -608,6 +631,15 @@ export default function AdminUsuarios() {
                                 title="Eliminar usuario"
                               >
                                 <Trash2 size={16} />
+                              </button>
+                            )}
+                            {canEditUsers && u.rol === 'repartidor' && (
+                              <button
+                                onClick={() => handleCerrarSesionRemota(u)}
+                                className="p-2 text-amber-600 hover:bg-amber-50 rounded-xl transition-colors"
+                                title="Cerrar sesion remota"
+                              >
+                                <LogOut size={16} />
                               </button>
                             )}
                           </div>

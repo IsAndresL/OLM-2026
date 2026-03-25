@@ -51,6 +51,7 @@ export const usuariosService = {
   editar:       (token, id, data)    => req('PUT',   `/usuarios/${id}`, data, token),
   eliminar:     (token, id)          => req('DELETE', `/usuarios/${id}`, null, token),
   toggleEstado: (token, id, activo)  => req('PATCH', `/usuarios/${id}/estado`, { activo }, token),
+  cerrarSesion: (token, id)          => req('POST',  `/usuarios/${id}/cerrar-sesion`, null, token),
   subirAvatar:  (token, id, file) => {
     const fd = new FormData();
     fd.append('foto', file);

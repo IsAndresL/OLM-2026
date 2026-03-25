@@ -196,6 +196,54 @@ router.patch('/:id/estado', verificarToken, checkRole(['admin']), checkAdminPerm
   return res.json(data);
 });
 
+// POST /api/v1/usuarios/:id/cerrar-sesion
+router.post('/:id/cerrar-sesion', verificarToken, checkRole(['admin']), checkAdminPermission('usuarios.edit'), async (req, res) => {
+  const { id } = req.params;
+
+  const { data: targetUser, error: fetchError } = await supabase
+    .from('usuarios')
+    .select('id, rol, nombre_completo')
+    .eq('id', id)
+    .single();
+
+  if (fetchError || !targetUser) return res.status(404).json({ error: 'Usuario no encontrado' });
+  if (targetUser.rol !== 'repartidor') {
+    return res.status(400).json({ error: 'Solo se puede cerrar sesion remota a cuentas de repartidor' });
+  }
+
+  const nowIso = new Date().toISOString();
+  const updateRes = await supabase
+    .from('usuarios')
+    .update({
+      current_session_id: null,
+      is_online: false,
+      last_activity_at: nowIso,
+    })
+    .eq('id', id)
+    .select('id, nombre_completo, rol')
+    .single();
+
+  if (updateRes.error) {
+    const msg = String(updateRes.error.message || '').toLowerCase();
+    if (msg.includes('current_session_id')) {
+      const fallback = await supabase
+        .from('usuarios')
+        .update({
+          is_online: false,
+          last_activity_at: nowIso,
+        })
+        .eq('id', id)
+        .select('id, nombre_completo, rol')
+        .single();
+      if (fallback.error) return res.status(500).json({ error: fallback.error.message });
+      return res.json({ success: true, message: 'Sesion del repartidor cerrada remotamente', user: fallback.data });
+    }
+    return res.status(500).json({ error: updateRes.error.message });
+  }
+
+  return res.json({ success: true, message: 'Sesion del repartidor cerrada remotamente', user: updateRes.data });
+});
+
 // PUT /api/v1/usuarios/:id (Editar usuario)
 router.put('/:id', verificarToken, checkRole(['admin']), checkAdminPermission('usuarios.edit'), async (req, res) => {
   const { nombre_completo, telefono, identificacion, permisos, es_principal, email, nombre_empresa, nit_empresa } = req.body;
