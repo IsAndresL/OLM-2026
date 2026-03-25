@@ -187,6 +187,29 @@ router.post('/ping', verificarToken, async (req, res) => {
   return res.json({ ok: true });
 });
 
+// POST /api/v1/auth/verify-password
+router.post('/verify-password', verificarToken, async (req, res) => {
+  const rawPassword = String(req.body?.password || '');
+  if (!rawPassword) return res.status(400).json({ error: 'Contraseña requerida' });
+
+  const authClient = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    { auth: { persistSession: false, autoRefreshToken: false } }
+  );
+
+  const { data: authData, error: authError } = await authClient.auth.signInWithPassword({
+    email: req.user.email,
+    password: rawPassword,
+  });
+
+  if (authError || !authData.user) {
+    return res.status(401).json({ error: 'Contraseña incorrecta' });
+  }
+
+  return res.json({ ok: true });
+});
+
 // GET /api/v1/auth/me
 router.get('/me', verificarToken, (req, res) => res.json({ user: req.user }));
 

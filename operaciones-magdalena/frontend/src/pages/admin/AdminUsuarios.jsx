@@ -71,8 +71,7 @@ export default function AdminUsuarios() {
     e.preventDefault();
     setVerifying(true);
     try {
-      // Intentar login con el correo del admin actual + password ingresado
-      await authService.login(activeUser.email, verifyPass);
+      await authService.verifyPassword(token, verifyPass);
       setIsVerified(true);
     } catch (err) {
       mostrarAlerta('error', 'Contraseña incorrecta');
@@ -315,6 +314,16 @@ export default function AdminUsuarios() {
              <h2 className="text-xl font-title text-gray-800 mb-2">Panel Protegido</h2>
              <p className="text-sm text-gray-500 mb-8 font-body">Por tu seguridad, introduce tu contraseña de administrador para continuar.</p>
              <form onSubmit={handleVerify} className="space-y-4">
+                <input
+                  type="text"
+                  name="username"
+                  autoComplete="username"
+                  value={activeUser?.email || ''}
+                  readOnly
+                  className="hidden"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
                 <input 
                   type="password" 
                   autoFocus
