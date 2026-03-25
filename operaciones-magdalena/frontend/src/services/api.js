@@ -1,11 +1,38 @@
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000/api/v1';
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function req(method, path, body = null, token = null) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const cfg = { method, headers };
   if (body) cfg.body = JSON.stringify(body);
-  const res  = await fetch(`${BASE}${path}`, cfg);
+  const url = `${BASE}${path}`;
+  const retryableNetworkError = (err) => {
+    const msg = String(err?.message || '').toLowerCase();
+    return msg.includes('failed to fetch') || msg.includes('network') || msg.includes('load failed');
+  };
+
+  let lastError = null;
+  let res = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      res = await fetch(url, cfg);
+      lastError = null;
+      break;
+    } catch (err) {
+      lastError = err;
+      if (!retryableNetworkError(err) || attempt === 2) break;
+      await sleep(250 * (attempt + 1));
+    }
+  }
+
+  if (lastError) {
+    throw new Error('Sin conexion temporal. Intenta nuevamente.');
+  }
+
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
   return data;
