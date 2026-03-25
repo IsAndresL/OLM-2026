@@ -95,17 +95,20 @@ export default function AdminDashboard() {
   const [exportLoading, setExportLoading] = useState(false);
 
   useEffect(() => {
+    if (!token) return;
     cargarResumen();
     // Refresh every 5 minutes
     const interval = setInterval(cargarResumen, 300000);
     return () => clearInterval(interval);
-  }, [fechaFiltro, filtroEmpresaId, filtroRepartidorId]);
+  }, [token, fechaFiltro, filtroEmpresaId, filtroRepartidorId]);
 
   useEffect(() => {
+    if (!token) return;
     cargarTendencia();
-  }, [diasTendencia, modoRango, fechaDesde, fechaHasta, filtroEmpresaId, filtroRepartidorId]);
+  }, [token, diasTendencia, modoRango, fechaDesde, fechaHasta, filtroEmpresaId, filtroRepartidorId]);
 
   const cargarResumen = async () => {
+    if (!token) return;
     try {
       setLoadingResumen(true);
       const data = await dashboardService.resumen(token, {
@@ -122,6 +125,7 @@ export default function AdminDashboard() {
   };
 
   const cargarTendencia = async () => {
+    if (!token) return;
     try {
       if (modoRango === 'custom' && fechaDesde > fechaHasta) {
         mostrarAlerta('error', 'La fecha desde no puede ser mayor que la fecha hasta');
