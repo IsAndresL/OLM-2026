@@ -502,7 +502,7 @@ export default function AdminDashboard() {
 
           <div className="h-72 w-full min-w-0">
             {loadingTendencia ? <SkeletonCard height="h-full" /> : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280}>
                 <BarChart data={tendencia} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                   <XAxis dataKey="fecha_corta" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6b7280' }} dy={10} />
